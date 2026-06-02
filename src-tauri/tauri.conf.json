@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ClipNest",
+  "version": "1.0.0",
+  "identifier": "com.copyliusq.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "copyliusq",
+    "category": "Productivity",
+    "shortDescription": "剪贴板知识捕获工具",
+    "longDescription": "ClipNest 是一款 Windows 本地运行的剪贴板知识管理工具。通过全局快捷键快速捕获剪贴板内容,自动生成标题、标签和摘要,并通过全文搜索随时复用。",
+    "copyright": "Copyright (c) 2026 copyliusq",
+    "homepage": "https://github.com/copyliusq/clipnest",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
