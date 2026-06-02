@@ -111,15 +111,17 @@ ClipNest 的做法：
 
 ### 安装
 
-1. 从 [Releases](releases/) 下载安装包：
-   - `ClipNest_1.0.0_x64-setup.exe` — NSIS 安装包（推荐，普通用户）
-   - `ClipNest_1.0.0_x64_en-US.msi` — MSI 安装包（适合企业批量部署）
+1. 从 [Releases](releases/) 下载最新安装包：
+   - **`ClipNest_1.1.0_x64-setup.exe`** — NSIS 安装包（推荐，普通用户）
+   - `ClipNest_1.1.0_x64_en-US.msi` — MSI 安装包（适合企业批量部署）
 
 2. 双击安装包，按向导完成。
 
 3. 启动后**无窗口**（正常），程序在系统托盘运行，图标 🗂️ 出现在右下角。
 
 4. 按 `Alt+Space` 打开搜索窗口，或 `Alt+W` 开始保存。
+
+> v1.1.0 新增：托盘菜单 → 设置，可开启「开机自启」
 
 ### 卸载
 
@@ -589,9 +591,13 @@ H:\code\copyliusq\
 ├── public/                       # 静态资源
 ├── docs/                         # 设计文档
 ├── releases/                     # 发布产物
-│   └── v1.0.0/
-│       ├── ClipNest_1.0.0_x64_en-US.msi
-│       ├── ClipNest_1.0.0_x64-setup.exe
+│   ├── v1.0.0/
+│   │   ├── ClipNest_1.0.0_x64_en-US.msi
+│   │   ├── ClipNest_1.0.0_x64-setup.exe
+│   │   └── SHA256SUMS.txt
+│   └── v1.1.0/
+│       ├── ClipNest_1.1.0_x64_en-US.msi
+│       ├── ClipNest_1.1.0_x64-setup.exe
 │       └── SHA256SUMS.txt
 ├── index.html                    # HTML 入口
 ├── package.json                  # Node 依赖
@@ -690,5 +696,5 @@ MIT License — 自由使用、修改、分发。
 <p align="center">
   <sub>用 ❤️ 和 Rust 制作</sub>
   <br/>
-  <sub>v1.0.0 · 2026-06</sub>
+  <sub>v1.1.0 · 2026-06</sub>
 </p>

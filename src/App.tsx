@@ -42,6 +42,7 @@ interface Snippet {
   created_at: string;
   updated_at: string;
   pinned: boolean;
+  image_path?: string | null;
 }
 
 interface ClipItem {
@@ -201,6 +202,162 @@ export function Toast({
   );
 }
 
+export function SettingsWindow({ onToast }: { onToast: (title: string, description?: string) => void }) {
+  const [autostart, setAutostart] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [stats, setStats] = useState<{ total: number; pinned: number } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const enabled = await invoke<boolean>("get_autostart");
+        setAutostart(enabled);
+        const all = await invoke<Snippet[]>("search_snippets", { query: "" });
+        const pinned = all.filter((s) => s.pinned).length;
+        setStats({ total: all.length, pinned });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        onToast("加载设置失败", msg);
+      } finally {
+        setLoaded(true);
+      }
+    })();
+  }, []);
+
+  const toggleAutostart = async (next: boolean) => {
+    try {
+      await invoke("set_autostart", { enable: next });
+      setAutostart(next);
+      onToast(next ? "已启用开机自启" : "已禁用开机自启");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      onToast("设置失败", msg);
+    }
+  };
+
+  const handleExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const path = await invoke<string>("export_markdown");
+      onToast("导出成功", path);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      onToast("导出失败", msg);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const closeWindow = () => {
+    void getCurrentWindow().hide();
+  };
+
+  if (!loaded) {
+    return (
+      <div className="settings-stage">
+        <GlassPanel variant="window" className="settings-window">
+          <div className="flex h-full items-center justify-center text-[var(--text-muted)]">加载中...</div>
+        </GlassPanel>
+      </div>
+    );
+  }
+
+  return (
+    <div className="settings-stage">
+      <GlassPanel variant="window" className="settings-window">
+        <div className="settings-titlebar">
+          <div className="flex items-center gap-2">
+            <Settings className="h-4 w-4 text-[var(--accent)]" />
+            <span className="text-[13px] font-semibold text-[var(--text-primary)]">ClipNest 设置</span>
+          </div>
+          <button type="button" className="window-close" onClick={closeWindow} aria-label="关闭">
+            <span className="i-lucide-x" />
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="settings-content">
+          <section className="settings-section">
+            <div className="settings-section-title">系统</div>
+
+            <div className="settings-row">
+              <div className="settings-row-info">
+                <div className="settings-row-label">开机自启</div>
+                <div className="settings-row-desc">登录 Windows 时自动启动 ClipNest</div>
+              </div>
+              <button
+                type="button"
+                className={cn("toggle", autostart && "toggle-on")}
+                onClick={() => void toggleAutostart(!autostart)}
+                aria-pressed={autostart}
+              >
+                <span className="toggle-knob" />
+              </button>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-info">
+                <div className="settings-row-label">快捷键</div>
+                <div className="settings-row-desc">Alt+W 快速保存 · Alt+Space 打开搜索</div>
+              </div>
+              <span className="shortcut-pill">Alt + W</span>
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section-title">数据</div>
+
+            <div className="settings-row">
+              <div className="settings-row-info">
+                <div className="settings-row-label">知识库统计</div>
+                <div className="settings-row-desc">
+                  {stats ? `共 ${stats.total} 条记录 · 已固定 ${stats.pinned} 条` : "正在加载..."}
+                </div>
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-info">
+                <div className="settings-row-label">导出为 Markdown</div>
+                <div className="settings-row-desc">保存到「文档\ClipNest」目录</div>
+              </div>
+              <button
+                type="button"
+                className="settings-action"
+                onClick={() => void handleExport()}
+                disabled={exporting}
+              >
+                {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                立即导出
+              </button>
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section-title">关于</div>
+            <div className="settings-about">
+              <div className="settings-about-row">
+                <span>版本</span>
+                <span>1.1.0</span>
+              </div>
+              <div className="settings-about-row">
+                <span>仓库</span>
+                <a href="https://github.com/liu020800/clipnest" target="_blank" rel="noreferrer" className="text-[var(--accent)]">
+                  github.com/liu020800/clipnest
+                </a>
+              </div>
+            </div>
+          </section>
+        </div>
+      </GlassPanel>
+    </div>
+  );
+}
+
 export function CapturePopup({ onToast }: { onToast: (title: string, description?: string) => void }) {
   const [clipboardContent, setClipboardContent] = useState("");
   const [analysis, setAnalysis] = useState<ClipboardAnalysis | null>(null);
@@ -208,6 +365,8 @@ export function CapturePopup({ onToast }: { onToast: (title: string, description
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [exiting, setExiting] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [imageData, setImageData] = useState<{ bytes: Uint8Array; ext: string; preview: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const tooLong = title.length > 30;
   const canSave = title.trim().length > 0 && !tooLong && !saving;
@@ -215,15 +374,57 @@ export function CapturePopup({ onToast }: { onToast: (title: string, description
   const refreshClipboard = useCallback(async () => {
     try {
       const text = await invoke<string>("get_clipboard_content");
-      setClipboardContent(text);
-      const a = analyzeClipboardContent(text);
-      setAnalysis(a);
-      setTitle(a.title);
-      setSelectedTags(a.tags);
+      if (text.trim()) {
+        setClipboardContent(text);
+        setImageData(null);
+        const a = analyzeClipboardContent(text);
+        setAnalysis(a);
+        setTitle(a.title);
+        setSelectedTags(a.tags);
+        return;
+      }
     } catch {
-      setClipboardContent("");
+      // fall through to image check
     }
+
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        for (const type of item.types) {
+          if (type.startsWith("image/")) {
+            const blob = await item.getType(type);
+            const buf = new Uint8Array(await blob.arrayBuffer());
+            const ext = type === "image/png" ? "png" : type === "image/jpeg" ? "jpg" : "png";
+            const preview = URL.createObjectURL(blob);
+            setImageData({ bytes: buf, ext, preview });
+            setClipboardContent("[图片]");
+            setAnalysis({
+              type: "image",
+              title: "图片",
+              summary: `已检测到剪贴板中的图片 (${(buf.length / 1024).toFixed(1)} KB)`,
+              tags: ["图片"],
+              insights: [],
+              related: [],
+            });
+            setTitle("图片");
+            setSelectedTags(["图片"]);
+            return;
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    setClipboardContent("");
+    setImageData(null);
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (imageData?.preview) URL.revokeObjectURL(imageData.preview);
+    };
+  }, [imageData]);
 
   useEffect(() => {
     void refreshClipboard();
@@ -253,14 +454,24 @@ export function CapturePopup({ onToast }: { onToast: (title: string, description
   });
 
   const handleSave = async () => {
-    if (!canSave || !clipboardContent.trim()) return;
+    if (!canSave) return;
     setSaving(true);
     try {
-      await invoke("save_snippet", {
-        title: title.trim(),
-        content: clipboardContent,
-        tags: selectedTags.join(",") || null,
-      });
+      if (imageData) {
+        await invoke("save_image", {
+          title: title.trim(),
+          tags: selectedTags.join(",") || null,
+          imageBytes: Array.from(imageData.bytes),
+          ext: imageData.ext,
+        });
+      } else {
+        if (!clipboardContent.trim()) return;
+        await invoke("save_snippet", {
+          title: title.trim(),
+          content: clipboardContent,
+          tags: selectedTags.join(",") || null,
+        });
+      }
       setExiting(true);
       setSaving(false);
       onToast("已保存", `${title.trim()}`);
@@ -268,14 +479,47 @@ export function CapturePopup({ onToast }: { onToast: (title: string, description
         setExiting(false);
         void getCurrentWindow().hide();
       }, 380);
-    } catch {
+    } catch (err) {
       setSaving(false);
-      onToast("保存失败", "请稍后重试");
+      const msg = err instanceof Error ? err.message : String(err);
+      onToast("保存失败", msg);
     }
   };
 
   const toggleTag = (tag: string) => {
     setSelectedTags((cur) => (cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag]));
+  };
+
+  const handleAiTag = async () => {
+    if (aiLoading || imageData || !clipboardContent.trim()) return;
+    setAiLoading(true);
+    try {
+      const result = await invoke<string>("auto_tag_ai", {
+        title: title.trim() || "未命名",
+        content: clipboardContent,
+      });
+      const aiTags = result
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      if (aiTags.length > 0) {
+        setSelectedTags((cur) => {
+          const merged = [...cur];
+          for (const t of aiTags) {
+            if (!merged.includes(t)) merged.push(t);
+          }
+          return merged;
+        });
+        onToast("AI 标签已添加", `+${aiTags.length} 个`);
+      } else {
+        onToast("AI 未生成标签", "");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      onToast("AI 标签失败", msg.includes("Ollama") ? "请先启动 Ollama" : msg);
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   if (!analysis) {
@@ -330,7 +574,20 @@ export function CapturePopup({ onToast }: { onToast: (title: string, description
         </div>
 
         <div className="mt-3">
-          <SectionHeader title="标签" />
+          <SectionHeader
+            title="标签"
+            action={
+              <button
+                type="button"
+                className="copy-chip"
+                onClick={() => void handleAiTag()}
+                disabled={aiLoading}
+              >
+                {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bot className="h-3.5 w-3.5" />}
+                AI 标签
+              </button>
+            }
+          />
           <div className="flex flex-wrap gap-2">
             {selectedTags.slice(0, 3).map((tag) => (
               <TagBadge key={tag} ai selected onClick={() => toggleTag(tag)}>
@@ -361,7 +618,11 @@ export function CapturePopup({ onToast }: { onToast: (title: string, description
             }
           />
           <div className="preview-box">
-            <pre>{clipboardContent}</pre>
+            {imageData ? (
+              <img src={imageData.preview} alt="剪贴板图片" className="max-h-full max-w-full object-contain" />
+            ) : (
+              <pre>{clipboardContent}</pre>
+            )}
           </div>
         </div>
 
@@ -734,7 +995,7 @@ export function MainLibrary({ onToast }: { onToast: (title: string, description?
   const saveEditTitle = async () => {
     if (!selected || !editTitleVal.trim()) { setEditingTitle(false); return; }
     try {
-      await invoke("update_clip", { id: selected.id, title: editTitleVal.trim() });
+      await invoke("update_snippet", { id: selected.id, title: editTitleVal.trim() });
       setEditingTitle(false);
       await loadItems(query);
       onToast("标题已更新");
@@ -750,7 +1011,7 @@ export function MainLibrary({ onToast }: { onToast: (title: string, description?
   const saveEditTags = async () => {
     if (!selected) { setEditingTags(false); return; }
     try {
-      await invoke("update_clip", { id: selected.id, tags: editTagsVal.trim() || null });
+      await invoke("update_snippet", { id: selected.id, tags: editTagsVal.trim() || null });
       setEditingTags(false);
       await loadItems(query);
       onToast("标签已更新");
@@ -766,7 +1027,7 @@ export function MainLibrary({ onToast }: { onToast: (title: string, description?
 
   return (
     <div className="library-shell">
-      <Sidebar active={activeCategory} onNavigate={(cat) => { setActiveCategory(cat); setQuery(CATEGORY_QUERY_MAP[cat] ?? cat); }} onSettings={() => onToast("设置功能", "即将上线")} onExport={() => void handleExport()} />
+      <Sidebar active={activeCategory} onNavigate={(cat) => { setActiveCategory(cat); setQuery(CATEGORY_QUERY_MAP[cat] ?? cat); }} onSettings={() => void invoke("open_settings")} onExport={() => void handleExport()} />
       <ContentList items={items} selectedId={selectedId} onSelect={selectItem} query={query} onQueryChange={setQuery} />
       {selected ? (
         <DetailPanel item={selected} loading={loadingDetail} onPin={() => void handlePin()} onDelete={() => void handleDelete()}
@@ -804,6 +1065,7 @@ function App() {
       <div className="preview-area">
         {label === "save" && <CapturePopup onToast={showToast} />}
         {label === "search" && <MainLibrary onToast={showToast} />}
+        {label === "settings" && <SettingsWindow onToast={showToast} />}
         {!label && (
           <div className="flex h-full items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-[var(--accent)]" />

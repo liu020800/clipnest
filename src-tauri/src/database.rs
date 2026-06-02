@@ -15,6 +15,7 @@ pub struct Snippet {
     pub created_at: String,
     pub updated_at: String,
     pub pinned: bool,
+    pub image_path: Option<String>,
 }
 
 pub struct Database {
@@ -53,6 +54,17 @@ impl Database {
         let _ = self.conn.execute_batch(
             "ALTER TABLE snippets ADD COLUMN pinyin TEXT DEFAULT '';",
         );
+        // v1.1 image support: add silently for pre-v1.1 databases
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE snippets ADD COLUMN image_path TEXT;",
+        );
+        // v1.1 settings table
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
+        )?;
 
         self.conn.execute_batch(
             "
@@ -101,6 +113,22 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn insert_snippet_with_image(
+        &self,
+        title: &str,
+        content: &str,
+        tags: Option<&str>,
+        image_path: &str,
+    ) -> Result<i64, rusqlite::Error> {
+        let snippet_type = "image";
+        let pinyin = generate_pinyin(&format!("{} {} {}", title, content, tags.unwrap_or("")));
+        self.conn.execute(
+            "INSERT INTO snippets (title, content, pinyin, type, tags, image_path) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![title, content, pinyin, snippet_type, tags, image_path],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
     pub fn search(&self, query: &str, limit: i64) -> Result<Vec<Snippet>, rusqlite::Error> {
         if query.trim().is_empty() {
             return self.get_recent(limit);
@@ -111,7 +139,8 @@ impl Database {
         }
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.title, s.content, s.type, s.tags,
-                    s.source_app, s.created_at, s.updated_at, s.pinned, s.pinyin
+                    s.source_app, s.created_at, s.updated_at, s.pinned, s.pinyin,
+                    s.image_path
              FROM snippets s
              JOIN snippets_fts fts ON s.id = fts.rowid
              WHERE snippets_fts MATCH ?1
@@ -125,7 +154,7 @@ impl Database {
     pub fn get_snippet_by_id(&self, id: i64) -> Result<Option<Snippet>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, content, type, tags, source_app, created_at, updated_at, pinned
-                    , pinyin FROM snippets WHERE id = ?1",
+                    , pinyin, image_path FROM snippets WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], |row| map_snippet(row))?;
         match rows.next() {
@@ -137,7 +166,7 @@ impl Database {
     pub fn get_pinned(&self, limit: i64) -> Result<Vec<Snippet>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, content, type, tags, source_app, created_at, updated_at, pinned
-                    , pinyin
+                    , pinyin, image_path
              FROM snippets
              WHERE pinned = 1
              ORDER BY updated_at DESC
@@ -150,7 +179,7 @@ impl Database {
     pub fn get_recent(&self, limit: i64) -> Result<Vec<Snippet>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, content, type, tags, source_app, created_at, updated_at, pinned
-                    , pinyin
+                    , pinyin, image_path
              FROM snippets
              ORDER BY pinned DESC, created_at DESC
              LIMIT ?1",
@@ -195,6 +224,7 @@ impl Database {
     pub fn get_all_snippets(&self) -> Result<Vec<Snippet>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, content, type, tags, source_app, created_at, updated_at, pinned, pinyin
+                    , image_path
              FROM snippets ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| map_snippet(row))?;
@@ -235,6 +265,7 @@ fn map_snippet(row: &rusqlite::Row) -> rusqlite::Result<Snippet> {
         updated_at: row.get(7)?,
         pinned: row.get::<_, i32>(8)? != 0,
         pinyin: row.get(9)?,
+        image_path: row.get::<_, Option<String>>(10)?,
     })
 }
 

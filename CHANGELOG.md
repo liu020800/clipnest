@@ -7,6 +7,43 @@
 
 ---
 
+## [1.1.0] - 2026-06-02
+
+聚焦「闭环 + 体验」的增量更新：修复 v1.0 遗留的 3 个已实现但未接通的功能，并扩展为完整的设置中心与图片捕获能力。
+
+### 新增
+
+- **设置窗口**
+  - 托盘菜单 + 搜索侧栏均可打开（`Alt+Space` → 侧栏齿轮）
+  - 「开机自启」开关（基于 `tauri-plugin-autostart`，写 Windows 注册表 Run 项）
+  - 知识库统计（总数 / 固定数）
+  - 一键导出 Markdown
+  - 版本信息 + GitHub 链接
+- **图片剪贴板支持**
+  - 保存窗口自动检测 PNG / JPG 图片
+  - 图片以二进制形式保存到 `%APPDATA%\com.copyliusq.desktop\images\`
+  - 数据库新增 `image_path` 列（向后兼容，存量库静默 ALTER）
+  - 详情面板未来可预览（v1.2 计划）
+- **AI 标签按钮**：保存窗口「标签」section 右上角新增 `[AI 标签]` 按钮，调用本地 Ollama (`qwen2.5:3b`) 生成补充标签并自动合并
+
+### 修复
+
+- 详情面板标题/标签编辑失败（`update_clip` 命令缺失 → 注册 `update_snippet` 命令 + 修复前端调用）
+- 详情面板「导出」按钮（`export_markdown` 命令缺失 → 完整实现：导出到 `%USERPROFILE%\Documents\ClipNest\export-YYYYMMDD-HHMMSS.md`）
+- 保存窗口无法触发 AI 标签（新增 UI 入口）
+
+### 技术
+
+- 新增 Tauri 命令：`update_snippet`、`export_markdown`、`open_settings`、`get_all_settings`、`save_setting`、`get_autostart`、`set_autostart`、`save_image`
+- 新增 Tauri 插件：`tauri-plugin-autostart`（v2）
+- 新增 Rust crate：`base64`
+- 新增 DB 表：`settings (key, value)`
+- 新增 DB 列：`snippets.image_path TEXT`
+- 前端新增组件：`SettingsWindow`，按 window label 路由
+- 前端 CSS：新增 ~180 行（设置窗口样式 + 开关 / 按钮 / 卡片）
+
+---
+
 ## [1.0.0] - 2026-06-02
 
 首个正式发布版本。
