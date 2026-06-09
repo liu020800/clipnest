@@ -1,0 +1,61 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+app.log
+app.err
+build.log
+build.test.log
+vite.log
+vite.verify.err.log
+vite.verify.out.log
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+src-tauri/Cargo.lock
+*.rs.bk
+
+# Release artifacts (published via GitHub Releases, not committed)
+releases/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Tooling
+.codex-logs/
+
+# C# / .NET (scripts/ocr_host probe)
+scripts/ocr_host/bin/
+scripts/ocr_host/obj/
+src-tauri/resources/ocr_host/
+*.nupkg
+
+# Test screenshot artifacts that we don't want in git (keep ui_*.png, drop test_*.png)
+screenshots/test_*.png
+
+# Python debug scripts in root (kept for local repro, not for commit)
+test_capture.py
+test_debug.py
+test_ocr_click.py
+test_screenshots.py
+test_ui_interactions.py
+debug_capture.py
+debug_image_obj.py
