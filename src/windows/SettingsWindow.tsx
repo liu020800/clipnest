@@ -8,7 +8,7 @@ import { cn } from "../lib/utils";
 import { useSettings } from "../hooks/useSettings";
 import type { TagSummary } from "../types";
 
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.1.2";
 
 export function SettingsWindow({
   onToast,
@@ -251,12 +251,14 @@ export function SettingsWindow({
   const isAiOn = settings.getBool("ai_enabled", false);
   const isAutoTagOn = settings.getBool("auto_tag_on_capture", true);
   const isAutoCloseOn = settings.getBool("auto_close_on_blur", true);
+  const isClipboardHistoryOn = settings.getBool("clipboard_history_enabled", true);
   const captureShortcut = settings.get("capture_shortcut", "Ctrl+Shift+S");
   const captureShortcutAlt = settings.get("capture_shortcut_alt", "Alt+W");
   const searchShortcut = settings.get("search_shortcut", "Alt+Space");
   const screenOcrShortcut = settings.get("screen_ocr_shortcut", "Ctrl+Shift+O");
   const titleMax = settings.getNum("title_max_length", 10);
   const captureMax = settings.getNum("capture_text_max_length", 50000);
+  const clipboardHistoryMax = settings.getNum("clipboard_history_max", 500);
   const searchLimit = settings.getNum("search_limit", 50);
   const debounceMs = settings.getNum("search_debounce_ms", 150);
   const autoCloseDelay = settings.getNum("auto_close_delay_ms", 150);
@@ -410,6 +412,36 @@ export function SettingsWindow({
               >
                 <span className="toggle-knob" />
               </button>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-info">
+                <div className="settings-row-label">自动记录剪贴板</div>
+                <div className="settings-row-desc">复制文本后自动加入历史,可从搜索窗口直接粘贴</div>
+              </div>
+              <button
+                type="button"
+                className={cn("toggle", isClipboardHistoryOn && "toggle-on")}
+                onClick={() => settings.saveOne("clipboard_history_enabled", isClipboardHistoryOn ? "false" : "true")}
+                aria-pressed={isClipboardHistoryOn}
+              >
+                <span className="toggle-knob" />
+              </button>
+            </div>
+
+            <div className="settings-row settings-row-column">
+              <div className="settings-row-info">
+                <div className="settings-row-label">剪贴板历史保留数</div>
+                <div className="settings-row-desc">仅清理自动记录且未置顶的历史,范围 50–5000</div>
+              </div>
+              <div className="settings-inline-input">
+                <NumberField
+                  value={clipboardHistoryMax}
+                  min={50}
+                  max={5000}
+                  onCommit={(n) => void settings.saveOne("clipboard_history_max", String(n))}
+                />
+              </div>
             </div>
 
             <div className="settings-row settings-row-column">

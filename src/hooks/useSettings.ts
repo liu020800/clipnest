@@ -8,6 +8,8 @@ export const SETTINGS_DEFAULTS: Record<string, string> = {
   capture_shortcut_alt: "Alt+W",
   search_shortcut: "Alt+Space",
   screen_ocr_shortcut: "Ctrl+Shift+O",
+  clipboard_history_enabled: "true",
+  clipboard_history_max: "500",
   title_max_length: "10",
   search_limit: "50",
   search_debounce_ms: "150",

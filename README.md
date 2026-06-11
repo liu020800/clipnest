@@ -1,15 +1,17 @@
-# ClipNest v1.1.1
+# ClipNest v1.1.2
 
-> Windows 本地剪贴板知识管理工具 — 支持文本保存、全文搜索、透明框选 OCR。隐私优先,数据存在本地 SQLite。
+> Windows 本地剪贴板知识管理工具 — 支持文本保存、剪贴板历史粘贴、全文搜索、透明框选 OCR。隐私优先,数据存在本地 SQLite。
 
 ## 核心闭环
 
 ```
-复制文本 → Ctrl+Shift+S → 输入标题(默认 10 字) → Enter → 已保存
+复制文本 → 自动进入历史
               ↓
        随时按 Alt+Space
               ↓
-       ↑/↓ 选中 → Enter 复制并关闭
+       ↑/↓ 选中 → Enter / 双击 → 粘贴到原窗口
+
+需要手动整理时: Ctrl+Shift+S → 输入标题(默认 10 字) → Enter → 已保存
 ```
 
 ## 快捷键
@@ -21,13 +23,15 @@
 | 框选屏幕 OCR | **Ctrl+Shift+O** | 透明全屏框选,识别后进入保存窗口 |
 | 搜索窗口关闭 | **Esc** | 失焦自动关闭(150ms 延迟) |
 | 搜索上下移动 | **↑ / ↓** | 循环切换 |
-| 搜索复制并关闭 | **Enter** | 调用后端 `copy_to_clipboard` |
+| 搜索粘贴历史 | **Enter** | 写回剪贴板并粘贴到原窗口 |
+| 搜索双击粘贴 | 双击条目 | 与 Enter 行为一致 |
 | 搜索复制不关闭 | **Ctrl+C** | 适合连续复制多条 |
 
 ## 主要功能
 
 - **四类自动识别**:URL / 代码 / Prompt / 文本 — 自动选最合适的标题
 - **FTS5 全文搜索**:标题、正文、标签、拼音四列索引;`#docker` 标签过滤;LIKE 兜底
+- **剪贴板历史粘贴**:自动记录文本剪贴板历史,搜索选中后可直接粘贴到原窗口
 - **45 条内置规则**:保存时自动打规则标签(`auto_tag_on_capture` 可关)
 - **可选 AI 标签**:Ollama 8 秒超时,失败自动回退到规则
 - **重复检测**:同一内容保存会弹出横幅,可选"仍然保存副本"或"打开已有记录"
@@ -53,6 +57,8 @@
 | `capture_shortcut_alt` | `Alt+W` | 字符串(空=禁用) | 保存快捷键(备) |
 | `search_shortcut` | `Alt+Space` | 字符串 | 搜索快捷键 |
 | `screen_ocr_shortcut` | `Ctrl+Shift+O` | 字符串(空=禁用) | 框选 OCR 快捷键 |
+| `clipboard_history_enabled` | `true` | bool | 自动记录文本剪贴板历史 |
+| `clipboard_history_max` | `500` | 50-5000 | 自动历史保留条数 |
 | `title_max_length` | `10` | 10/20/30 | 标题最大字数 |
 | `search_limit` | `50` | 1-500 | 单次搜索最大结果数 |
 | `search_debounce_ms` | `150` | 0-2000 | 搜索输入防抖(ms) |
@@ -66,16 +72,18 @@
 | `ollama_model` | `qwen3:4b` | 字符串 | Ollama 模型名 |
 | `ai_tag_fallback` | `rules` | rules/none | AI 失败时回退 |
 
-## v1.0.1 → v1.1.1 主要变化
+## v1.0.1 → v1.1.2 主要变化
 
 详见 [CHANGELOG.md](CHANGELOG.md) 和 [docs/MIGRATION.md](docs/MIGRATION.md)。
 
+- 新增文本剪贴板历史自动记录和历史内容直接粘贴
+- 修复开机自启后前端白屏问题
 - 新增透明框选 OCR 窗口和 `Ctrl+Shift+O` 快捷键
 - 抛弃早期剪贴板图片 OCR 路线,避免影响剪贴板读取
 - OCR 输出强制 UTF-8,修复中文乱码
 - RapidOCR 增加小字预处理、置信度过滤和窄范围文本清洗
 - 安装包内置 WeChatOCR 备用主机与模型资源
-- 版本号正式稳定为 `1.1.1`
+- 版本号正式稳定为 `1.1.2`
 - 修复 `v1.1.0` 中保存文本复制失败的问题
 
 ## 安全与隐私

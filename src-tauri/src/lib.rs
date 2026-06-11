@@ -4,6 +4,7 @@ pub mod commands;
 pub mod database;
 mod hotkeys;
 pub mod ocr;
+mod paste;
 mod search;
 mod settings;
 mod tags;
@@ -19,6 +20,7 @@ pub struct AppState {
     pub db: Mutex<Database>,
     pub last_clipboard: Mutex<String>,
     pub pending_capture_text: Mutex<Option<String>>,
+    pub previous_foreground_window: Mutex<Option<isize>>,
     pub quitting: AtomicBool,
 }
 
@@ -26,14 +28,17 @@ fn build_window<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     label: &str,
 ) -> Result<(), tauri::Error> {
-    let mut builder =
-        tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("index.html".into()))
-            .inner_size(560.0, 500.0)
-            .center()
-            .decorations(false)
-            .skip_taskbar(true)
-            .transparent(true)
-            .visible(false);
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        app,
+        label,
+        tauri::WebviewUrl::App(window_app_path(label).into()),
+    )
+    .inner_size(560.0, 500.0)
+    .center()
+    .decorations(false)
+    .skip_taskbar(true)
+    .transparent(true)
+    .visible(false);
 
     match label {
         "search" => {
@@ -77,10 +82,21 @@ fn build_window<R: tauri::Runtime>(
     Ok(())
 }
 
+fn window_app_path(label: &str) -> String {
+    format!("index.html?window={label}")
+}
+
 pub fn show_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>, label: &str) {
     if let Some(w) = app.get_webview_window(label) {
+        let was_visible = w.is_visible().unwrap_or(false);
+        if label == "search" && !was_visible {
+            paste::remember_foreground_window(app);
+        }
         let _ = w.unminimize();
         let _ = w.show();
+        if !was_visible {
+            let _ = w.reload();
+        }
         let _ = w.set_focus();
     }
 }
@@ -135,6 +151,7 @@ pub fn run() {
                 db: Mutex::new(db),
                 last_clipboard: Mutex::new(String::new()),
                 pending_capture_text: Mutex::new(None),
+                previous_foreground_window: Mutex::new(None),
                 quitting: AtomicBool::new(false),
             });
 
@@ -148,8 +165,11 @@ pub fn run() {
             tray::setup_tray(&app_handle)?;
 
             hotkeys::register_shortcuts(&app_handle);
+            clipboard::start_clipboard_history_monitor(app_handle.clone());
 
-            show_window(&app_handle, "search");
+            // Keep startup quiet. Showing a transparent WebView during Windows login can
+            // leave it stuck blank until the whole app is restarted; users open it from
+            // the tray, hotkey, or second launch instead.
 
             Ok(())
         })
@@ -158,6 +178,7 @@ pub fn run() {
             clipboard::copy_to_clipboard,
             clipboard::get_clipboard_content,
             clipboard::get_current_clipboard_text,
+            paste::paste_text,
             // search
             search::search_snippets,
             search::list_snippets,
@@ -206,4 +227,15 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_app_path;
+
+    #[test]
+    fn window_app_path_pins_the_frontend_window_route() {
+        assert_eq!(window_app_path("search"), "index.html?window=search");
+        assert_eq!(window_app_path("capture"), "index.html?window=capture");
+    }
 }

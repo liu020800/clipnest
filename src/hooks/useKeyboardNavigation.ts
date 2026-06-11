@@ -25,7 +25,26 @@ export function useKeyboardNavigation({
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       const tag = target?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      const editingText = tag === "INPUT" || tag === "TEXTAREA";
+
+      if (editingText) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          if (count === 0) return;
+          setSelectedIndex((selectedIndex + 1) % count);
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          if (count === 0) return;
+          setSelectedIndex((selectedIndex - 1 + count) % count);
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          onEnter();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          onEscape?.();
+        }
+        return;
+      }
 
       if (e.key === "ArrowDown") {
         e.preventDefault();

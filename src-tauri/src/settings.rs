@@ -59,6 +59,8 @@ pub struct Settings {
     pub search_shortcut: String,
     pub screen_ocr_shortcut: String,
     pub autostart: bool,
+    pub clipboard_history_enabled: bool,
+    pub clipboard_history_max: i64,
 }
 
 impl Settings {
@@ -88,6 +90,8 @@ impl Settings {
             search_shortcut: read_string(db, "search_shortcut", "Alt+Space"),
             screen_ocr_shortcut: read_string(db, "screen_ocr_shortcut", "Ctrl+Shift+O"),
             autostart: read_bool(db, "autostart", false),
+            clipboard_history_enabled: read_bool(db, "clipboard_history_enabled", true),
+            clipboard_history_max: read_i64(db, "clipboard_history_max", 500).clamp(50, 5000),
         }
     }
 }
@@ -99,6 +103,8 @@ pub fn seed_defaults(db: &Database) {
     seed_setting(db, "capture_shortcut_alt", "Alt+W");
     seed_setting(db, "search_shortcut", "Alt+Space");
     seed_setting(db, "screen_ocr_shortcut", "Ctrl+Shift+O");
+    seed_setting(db, "clipboard_history_enabled", "true");
+    seed_setting(db, "clipboard_history_max", "500");
     seed_setting(db, "search_limit", "50");
     seed_setting(db, "search_debounce_ms", "150");
     seed_setting(db, "auto_close_on_blur", "true");

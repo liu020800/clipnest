@@ -7,6 +7,7 @@ export function ContentList({
   items,
   selectedId,
   onSelect,
+  onActivate,
   query,
   onQueryChange,
   listRef,
@@ -14,6 +15,7 @@ export function ContentList({
   items: ClipItem[];
   selectedId: number;
   onSelect: (id: number) => void;
+  onActivate?: (id: number) => void;
   query: string;
   onQueryChange: (q: string) => void;
   listRef?: React.RefObject<HTMLDivElement>;
@@ -49,6 +51,7 @@ export function ContentList({
             item={item}
             selected={item.id === selectedId}
             onClick={() => onSelect(item.id)}
+            onDoubleClick={() => onActivate?.(item.id)}
             query={query}
           />
         ))}

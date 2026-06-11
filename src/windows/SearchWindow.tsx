@@ -123,6 +123,19 @@ export function SearchWindow({
     [selected, onToast],
   );
 
+  const pasteSelected = useCallback(
+    async () => {
+      if (!selected) return;
+      try {
+        await api.pasteText(selected.content);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        onToast("粘贴失败", msg, "error");
+      }
+    },
+    [selected, onToast],
+  );
+
   const handleNavigate = (cat: CategoryKey) => {
     setCategory(cat);
   };
@@ -137,7 +150,7 @@ export function SearchWindow({
     void load(queryRef.current, categoryRef.current);
   }, [load]);
 
-  const onEnter = () => void copySelected(true);
+  const onEnter = () => void pasteSelected();
   const onCopyKeepOpen = () => void copySelected(false);
   const onEscape = () => void api.hideCurrentWindow();
 
@@ -165,6 +178,13 @@ export function SearchWindow({
         items={items}
         selectedId={selectedId}
         onSelect={handleSelect}
+        onActivate={(id) => {
+          setSelectedId(id);
+          const item = items.find((it) => it.id === id);
+          if (item) void api.pasteText(item.content).catch((e) => {
+            onToast("粘贴失败", String(e), "error");
+          });
+        }}
         query={query}
         onQueryChange={setQuery}
       />

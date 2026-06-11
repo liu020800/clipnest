@@ -1,5 +1,8 @@
-use tauri::Runtime;
+use tauri::{Manager, Runtime};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+
+const HISTORY_POLL_INTERVAL_MS: u64 = 700;
+const HISTORY_TITLE_MAX_CHARS: usize = 30;
 
 pub fn write_text_to_clipboard<R: Runtime>(
     app: &tauri::AppHandle<R>,
@@ -24,10 +27,7 @@ pub fn write_text_to_clipboard<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn copy_to_clipboard<R: Runtime>(
-    app: tauri::AppHandle<R>,
-    text: String,
-) -> Result<(), String> {
+pub fn copy_to_clipboard<R: Runtime>(app: tauri::AppHandle<R>, text: String) -> Result<(), String> {
     write_text_to_clipboard(&app, text)
 }
 
@@ -55,4 +55,88 @@ pub fn get_clipboard_content(state: tauri::State<crate::AppState>) -> Result<Str
         .lock()
         .map(|c| c.clone())
         .map_err(|e| e.to_string())
+}
+
+pub fn start_clipboard_history_monitor(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut last_seen = String::new();
+        let mut initialized = false;
+
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(HISTORY_POLL_INTERVAL_MS));
+
+            let Ok(text) = app.clipboard().read_text() else {
+                continue;
+            };
+            if let Some(state) = app.try_state::<crate::AppState>() {
+                if let Ok(mut cache) = state.last_clipboard.lock() {
+                    *cache = text.clone();
+                }
+            }
+
+            if !initialized {
+                last_seen = text;
+                initialized = true;
+                continue;
+            }
+            if text == last_seen {
+                continue;
+            }
+            last_seen = text.clone();
+
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let Some(state) = app.try_state::<crate::AppState>() else {
+                continue;
+            };
+            let Ok(db) = state.db.lock() else {
+                continue;
+            };
+            let settings = crate::settings::Settings::load(&db);
+            if !settings.clipboard_history_enabled {
+                continue;
+            }
+            if trimmed.chars().count() > settings.capture_text_max_length {
+                continue;
+            }
+
+            let title = clipboard_history_title(trimmed, HISTORY_TITLE_MAX_CHARS);
+            if let Err(e) =
+                db.upsert_clipboard_history(&title, trimmed, settings.clipboard_history_max)
+            {
+                eprintln!("[clipboard-history] failed to save clipboard text: {e}");
+            }
+        }
+    });
+}
+
+fn clipboard_history_title(text: &str, max_chars: usize) -> String {
+    let first_line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("剪贴板文本");
+    let collapsed = first_line.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(max_chars.max(1)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clipboard_history_title;
+
+    #[test]
+    fn clipboard_history_title_uses_first_non_empty_line() {
+        assert_eq!(
+            clipboard_history_title("\n  hello   world\nsecond", 30),
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn clipboard_history_title_has_a_fallback() {
+        assert_eq!(clipboard_history_title("  \n\t", 30), "剪贴板文本");
+    }
 }

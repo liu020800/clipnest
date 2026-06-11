@@ -25,11 +25,13 @@ export function ContentCard({
   item,
   selected,
   onClick,
+  onDoubleClick,
   query,
 }: {
   item: ClipItem;
   selected: boolean;
   onClick: () => void;
+  onDoubleClick?: () => void;
   query?: string;
 }) {
   const meta = typeMeta(item.type);
@@ -42,6 +44,7 @@ export function ContentCard({
     <button
       type="button"
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       className={cn("content-card", selected && "content-card-selected")}
     >
       <div className="flex items-start gap-3">

@@ -73,6 +73,8 @@ const MOCK_SETTINGS: Record<string, string> = {
   ai_tag_fallback: "rules",
   ai_enabled: "false",
   auto_tag_on_capture: "true",
+  clipboard_history_enabled: "true",
+  clipboard_history_max: "500",
   markdown_export_pinned_only: "false",
   screen_ocr_shortcut: "Ctrl+Shift+O",
   search_history_persist: "true",
@@ -108,6 +110,8 @@ export const api = {
   // === 剪贴板 ===
   copyToClipboard: (text: string) =>
     inTauri ? invoke<void>("copy_to_clipboard", { text }) : Promise.resolve(),
+  pasteText: (text: string) =>
+    inTauri ? invoke<void>("paste_text", { text }) : Promise.resolve(),
   getCurrentClipboardText: () =>
     inTauri
       ? invoke<string>("get_current_clipboard_text")

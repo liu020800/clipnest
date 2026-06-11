@@ -206,6 +206,53 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn upsert_clipboard_history(
+        &self,
+        title: &str,
+        content: &str,
+        max_history: i64,
+    ) -> Result<i64, rusqlite::Error> {
+        if let Some(existing) = self.find_by_content(content)? {
+            self.conn.execute(
+                "UPDATE snippets
+                 SET created_at = datetime('now', 'localtime'),
+                     updated_at = datetime('now', 'localtime')
+                 WHERE id = ?1",
+                params![existing.id],
+            )?;
+            return Ok(existing.id);
+        }
+
+        let snippet_type = detect_type(content);
+        let tags = "剪贴板";
+        let pinyin = generate_pinyin(&format!("{title} {content} {tags}"));
+        self.conn.execute(
+            "INSERT INTO snippets (title, content, pinyin, type, tags, source_app)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'clipboard-history')",
+            params![title, content, pinyin, snippet_type, tags],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        self.prune_clipboard_history(max_history)?;
+        Ok(id)
+    }
+
+    fn prune_clipboard_history(&self, max_history: i64) -> Result<(), rusqlite::Error> {
+        if max_history <= 0 {
+            return Ok(());
+        }
+        self.conn.execute(
+            "DELETE FROM snippets
+             WHERE id IN (
+                 SELECT id FROM snippets
+                 WHERE source_app = 'clipboard-history' AND pinned = 0
+                 ORDER BY created_at DESC
+                 LIMIT -1 OFFSET ?1
+             )",
+            params![max_history],
+        )?;
+        Ok(())
+    }
+
     pub fn insert_snippet_with_image(
         &self,
         title: &str,
@@ -807,6 +854,35 @@ mod tests {
         assert!(found.is_some());
         let not_found = db.find_by_content("does not exist").unwrap();
         assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn clipboard_history_upsert_reuses_existing_content() {
+        let db = temp_db();
+        let first = db
+            .upsert_clipboard_history("clip", "same clipboard text", 500)
+            .unwrap();
+        let second = db
+            .upsert_clipboard_history("clip again", "same clipboard text", 500)
+            .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(db.get_all_snippets().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clipboard_history_prunes_unpinned_auto_records() {
+        let db = temp_db();
+        for i in 0..4 {
+            db.upsert_clipboard_history(&format!("clip {i}"), &format!("content {i}"), 2)
+                .unwrap();
+        }
+        let auto_count = db
+            .get_all_snippets()
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.source_app.as_deref() == Some("clipboard-history"))
+            .count();
+        assert_eq!(auto_count, 2);
     }
 
     #[test]
