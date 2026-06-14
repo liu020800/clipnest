@@ -206,6 +206,32 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn save_user_snippet(
+        &self,
+        title: &str,
+        content: &str,
+        tags: Option<&str>,
+    ) -> Result<i64, rusqlite::Error> {
+        if let Some(existing) = self.find_clipboard_history_by_content(content)? {
+            let snippet_type = detect_type(content);
+            let pinyin = generate_pinyin(&format!("{} {} {}", title, content, tags.unwrap_or("")));
+            self.conn.execute(
+                "UPDATE snippets
+                 SET title = ?1,
+                     pinyin = ?2,
+                     type = ?3,
+                     tags = ?4,
+                     source_app = NULL,
+                     updated_at = datetime('now', 'localtime')
+                 WHERE id = ?5",
+                params![title, pinyin, snippet_type, tags, existing.id],
+            )?;
+            return Ok(existing.id);
+        }
+
+        self.insert_snippet(title, content, tags)
+    }
+
     pub fn upsert_clipboard_history(
         &self,
         title: &str,
@@ -251,6 +277,44 @@ impl Database {
             params![max_history],
         )?;
         Ok(())
+    }
+
+    pub fn find_user_saved_by_content(
+        &self,
+        content: &str,
+    ) -> Result<Option<Snippet>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, content, type, tags, source_app, created_at, updated_at, pinned, pinyin, image_path, image_dim_w, image_dim_h, ocr_status
+             FROM snippets
+             WHERE content = ?1 AND (source_app IS NULL OR source_app != 'clipboard-history')
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![content], |row| row_to_snippet(row))?;
+        match rows.next() {
+            Some(Ok(s)) => Ok(Some(s)),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
+    }
+
+    fn find_clipboard_history_by_content(
+        &self,
+        content: &str,
+    ) -> Result<Option<Snippet>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, content, type, tags, source_app, created_at, updated_at, pinned, pinyin, image_path, image_dim_w, image_dim_h, ocr_status
+             FROM snippets
+             WHERE content = ?1 AND source_app = 'clipboard-history'
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![content], |row| row_to_snippet(row))?;
+        match rows.next() {
+            Some(Ok(s)) => Ok(Some(s)),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
     }
 
     pub fn insert_snippet_with_image(
@@ -867,6 +931,46 @@ mod tests {
             .unwrap();
         assert_eq!(first, second);
         assert_eq!(db.get_all_snippets().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn user_save_promotes_clipboard_history_instead_of_duplicate() {
+        let db = temp_db();
+        let history_id = db
+            .upsert_clipboard_history("auto title", "manual save content", 500)
+            .unwrap();
+
+        assert!(db
+            .find_user_saved_by_content("manual save content")
+            .unwrap()
+            .is_none());
+
+        let saved_id = db
+            .save_user_snippet("real title", "manual save content", Some("important"))
+            .unwrap();
+        assert_eq!(saved_id, history_id);
+
+        let saved = db
+            .find_user_saved_by_content("manual save content")
+            .unwrap()
+            .expect("promoted history should now count as user saved");
+        assert_eq!(saved.title, "real title");
+        assert_eq!(saved.tags.as_deref(), Some("important"));
+        assert!(saved.source_app.is_none());
+        assert_eq!(db.get_all_snippets().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn user_saved_duplicate_still_blocks_second_save() {
+        let db = temp_db();
+        db.save_user_snippet("first", "same manual content", None)
+            .unwrap();
+
+        let existing = db
+            .find_user_saved_by_content("same manual content")
+            .unwrap()
+            .expect("first user save exists");
+        assert_eq!(existing.title, "first");
     }
 
     #[test]

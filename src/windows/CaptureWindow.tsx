@@ -167,13 +167,13 @@ export function CaptureWindow({
     };
   }, [duplicate, analysis, onToast]);
 
-  const handleSave = async (force = false) => {
-    if (!force && !canSave) return;
+  const handleSave = async () => {
+    if (!canSave) return;
     if (!clipboardText.trim()) {
       onToast("内容为空", "没有可保存的文本", "warning");
       return;
     }
-    if (!force && title.trim().length === 0) {
+    if (title.trim().length === 0) {
       onToast("标题为空", "请输入标题", "warning");
       return;
     }
@@ -198,25 +198,6 @@ export function CaptureWindow({
         setDuplicate(dup);
         return;
       }
-      onToast("保存失败", msg, "error");
-    }
-  };
-
-  const handleForceSave = async () => {
-    if (saving) return;
-    setDuplicate(null);
-    setSaving(true);
-    try {
-      await api.saveSnippetForce(title.trim(), clipboardText, selectedTags.join(",") || null);
-      setSaving(false);
-      onToast("已保存副本", title.trim(), "success");
-      window.setTimeout(() => {
-        setExiting(true);
-        window.setTimeout(() => void api.hideCurrentWindow(), 180);
-      }, 80);
-    } catch (err) {
-      setSaving(false);
-      const msg = err instanceof Error ? err.message : String(err);
       onToast("保存失败", msg, "error");
     }
   };
@@ -404,9 +385,6 @@ export function CaptureWindow({
               </button>
               <button type="button" className="secondary-button" onClick={openExisting}>
                 打开已有记录
-              </button>
-              <button type="button" className="primary-button" onClick={() => void handleForceSave()} disabled={saving}>
-                仍然保存副本
               </button>
             </div>
           </div>

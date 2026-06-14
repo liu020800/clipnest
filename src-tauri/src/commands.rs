@@ -76,7 +76,7 @@ fn save_snippet_inner(
     }
     if !force {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        if let Ok(Some(existing)) = db.find_by_content(trimmed) {
+        if let Ok(Some(existing)) = db.find_user_saved_by_content(trimmed) {
             // 返回结构化错误,前端解析 DUPLICATE::{json}
             let payload = serde_json::json!({
                 "id": existing.id,
@@ -99,7 +99,7 @@ fn save_snippet_inner(
     };
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let id = db
-        .insert_snippet(title_trimmed, trimmed, final_tags.as_deref())
+        .save_user_snippet(title_trimmed, trimmed, final_tags.as_deref())
         .map_err(|e| e.to_string())?;
     drop(db);
     let _ = crate::tray::refresh_tray_menu(&app);
