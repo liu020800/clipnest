@@ -18,8 +18,19 @@ function formatDateTime(raw: string): string {
   }).format(d);
 }
 
+function isSafeHttpUrl(raw: string): boolean {
+  // 严格只放行 http(s),阻断 javascript: / data: / file: 等可执行或本地协议,
+  // 避免历史/导入数据里塞入恶意 URL 直接渲染为可点击 <a> 触发 XSS。
+  try {
+    const u = new URL(raw.trim());
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function renderContent(content: string, type: string, query: string) {
-  if (type === "url") {
+  if (type === "url" && isSafeHttpUrl(content)) {
     return (
       <a
         href={content}
@@ -73,21 +84,21 @@ export function DetailPanel({
     }
   }, [item?.id]);
 
-  if (!item) {
-    return (
-      <section className="detail-panel flex items-center justify-center">
-        <p className="text-[var(--text-muted)]">选择一条记录查看详情</p>
-      </section>
-    );
-  }
-
-  if (loading) {
+  if (loading && !item) {
     return (
       <section className="detail-panel">
         <div className="detail-skeleton">
           <Loader2 className="h-5 w-5 animate-spin text-[var(--accent)]" />
           <div className="text-[15px] font-semibold text-[var(--text-main)]">加载中...</div>
         </div>
+      </section>
+    );
+  }
+
+  if (!item) {
+    return (
+      <section className="detail-panel flex items-center justify-center">
+        <p className="text-[var(--text-muted)]">选择一条记录查看详情</p>
       </section>
     );
   }

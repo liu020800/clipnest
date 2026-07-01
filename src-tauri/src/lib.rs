@@ -13,6 +13,7 @@ mod tray;
 use database::Database;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Instant;
 use tauri::Manager;
 use tauri_plugin_autostart::ManagerExt;
 
@@ -22,6 +23,10 @@ pub struct AppState {
     pub pending_capture_text: Mutex<Option<String>>,
     pub previous_foreground_window: Mutex<Option<isize>>,
     pub quitting: AtomicBool,
+    // 记录"应用自身写入剪贴板"的最近一次内容与时间戳,用于抑制
+    // start_clipboard_history_monitor 把自己写入的文本再当成"用户新复制"
+    // 重新插入历史(粘贴自循环)。
+    pub last_self_write: Mutex<Option<(String, Instant)>>,
 }
 
 fn build_window<R: tauri::Runtime>(
@@ -67,8 +72,7 @@ fn build_window<R: tauri::Runtime>(
         "screen_ocr" => {
             builder = builder
                 .title("框选识别")
-                .inner_size(1280.0, 720.0)
-                .maximized(true)
+                .fullscreen(true)
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .decorations(false)
@@ -133,9 +137,7 @@ pub fn run() {
             // Backup before opening if a pre-existing DB is found.
             if db_path.exists() {
                 let backups_dir = db_path.parent().unwrap().join("backups");
-                if let Err(e) = database::backup_database_file(&db_path, &backups_dir) {
-                    eprintln!("[setup] backup before migration failed: {e}");
-                }
+                let _ = database::backup_database_file(&db_path, &backups_dir);
             }
 
             let db = Database::new(db_path.to_str().unwrap()).expect("failed to open database");
@@ -153,13 +155,12 @@ pub fn run() {
                 pending_capture_text: Mutex::new(None),
                 previous_foreground_window: Mutex::new(None),
                 quitting: AtomicBool::new(false),
+                last_self_write: Mutex::new(None),
             });
 
             // Pre-create all windows to avoid on-demand creation freezes
             for label in ["search", "settings", "capture", "screen_ocr"] {
-                if let Err(e) = build_window(&app_handle, label) {
-                    eprintln!("[setup] failed to create window '{label}': {e}");
-                }
+                let _ = build_window(&app_handle, label);
             }
 
             tray::setup_tray(&app_handle)?;

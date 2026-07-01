@@ -123,23 +123,31 @@ pub fn delete_snippet(
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.delete_snippet(id).map_err(|e| e.to_string())?;
     }
-    // 物理删除: 当前图片存储保证 originals/xxx.png 与 thumbs/xxx.jpg 同 basename。
+    // 物理删除: 必须走 resolve_app_image_path 校验,避免数据库被注入 `../..` 之类的相对路径
+    // 触发任意文件删除。当前图片存储保证 originals/xxx.png 与 thumbs/xxx.jpg 同 basename。
     if let Some(rel) = image_path {
         if !rel.is_empty() {
             if let Ok(data_dir) = app.path().app_data_dir() {
-                let abs = data_dir.join(&rel);
-                if let Err(e) = std::fs::remove_file(&abs) {
-                    eprintln!("[delete_snippet] remove {abs:?} failed: {e}");
+                match resolve_app_image_path(&data_dir, &rel) {
+                    Ok(abs) => {
+                        let _ = std::fs::remove_file(&abs);
+                    }
+                    Err(_e) => {}
                 }
                 if rel.starts_with("originals/") || rel.starts_with("originals\\") {
-                    let thumb_rel = rel.replacen("originals/", "thumbs/", 1).replacen(
-                        "originals\\",
-                        "thumbs\\",
-                        1,
-                    );
-                    let thumb_abs = data_dir.join(thumb_rel).with_extension("jpg");
-                    if let Err(e) = std::fs::remove_file(&thumb_abs) {
-                        eprintln!("[delete_snippet] remove {thumb_abs:?} failed: {e}");
+                    let thumb_rel = rel
+                        .replacen("originals/", "thumbs/", 1)
+                        .replacen("originals\\", "thumbs\\", 1);
+                    // 缩略图实际扩展名是 .jpg,先换扩展名再走白名单 + canonicalize 校验。
+                    let thumb_rel_jpg = std::path::Path::new(&thumb_rel)
+                        .with_extension("jpg")
+                        .to_string_lossy()
+                        .into_owned();
+                    match resolve_app_image_path(&data_dir, &thumb_rel_jpg) {
+                        Ok(abs) => {
+                            let _ = std::fs::remove_file(&abs);
+                        }
+                        Err(_e) => {}
                     }
                 }
             }
@@ -445,7 +453,12 @@ pub fn open_db_dir(app: tauri::AppHandle) -> Result<String, String> {
 fn open_in_explorer(p: PathBuf) {
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("explorer").arg(&p).spawn();
+        let mut cmd = std::process::Command::new("explorer");
+        cmd.arg(&p);
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let _ = cmd.spawn();
     }
     #[cfg(target_os = "macos")]
     {
@@ -610,17 +623,24 @@ pub fn capture_screen_ocr_region(
         return Err("框选区域过大".to_string());
     }
 
+    // 先把框选浮层藏起来再截图,否则会把浮层本身拍进去。
     if let Some(window) = app.get_webview_window("screen_ocr") {
         let _ = window.hide();
     }
     std::thread::sleep(std::time::Duration::from_millis(220));
 
-    let screen = screenshots::Screen::from_point(region.x, region.y).map_err(|e| e.to_string())?;
+    // 前端传来的是逻辑像素 (CSS px),坐标系与 DisplayInfo.x/y 一致。
+    // screenshots crate 的 capture_area 内部会自行乘 scale_factor 转成物理像素,
+    // 所以这里必须传逻辑坐标,绝不能自己再乘一次缩放因子(否则在非 100% DPI 下双重缩放,
+    // 截图区域偏移且尺寸错误)。
+    let screen = screenshots::Screen::from_point(region.x, region.y)
+        .map_err(|e| format!("定位屏幕失败: {e}"))?;
     let local_x = region.x - screen.display_info.x;
     let local_y = region.y - screen.display_info.y;
+
     let image = screen
         .capture_area(local_x, local_y, region.width, region.height)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("截图失败: {e}"))?;
 
     let tmp_dir = app
         .path()
@@ -633,21 +653,61 @@ pub fn capture_screen_ocr_region(
         "region-{}.png",
         chrono::Utc::now().format("%Y%m%d%H%M%S%f")
     ));
-    image.save(&image_path).map_err(|e| e.to_string())?;
-    let latest_path = tmp_dir.join("latest-region.png");
-    let _ = std::fs::copy(&image_path, &latest_path);
+    image
+        .save(&image_path)
+        .map_err(|e| format!("保存截图失败: {e}"))?;
 
-    let rapid = crate::ocr::RapidOcrEngine::with_app(&app);
-    let wechat = crate::ocr::WechatOcrEngine::with_app(&app);
-    let result = match rapid.recognize(&image_path).or_else(|_| wechat.recognize(&image_path)) {
-        Ok(r) => Ok(OcrDoneInfo {
-            text: r.text,
-            source: r.source,
-        }),
-        Err(e) => Err(e.to_string()),
-    };
+    let result = run_ocr_engines(&app, &image_path);
+    // 不论成败都清理临时截图,避免缓存目录堆积。
     let _ = std::fs::remove_file(&image_path);
     result
+}
+
+/// 按 WeChatOCR 优先、RapidOCR 兜底的顺序识别。
+///
+/// WeChatOCR 是离线开源引擎,随安装包打包,开箱即用,作为默认引擎。
+/// RapidOCR 依赖本机 Python 环境且首次运行需联网装依赖,仅当它确实可用时
+/// 才作为兜底,绝不能因为机器恰好装了 Python 就抢在 WeChatOCR 前面跑(否则
+/// 会卡在 pip install 上直到超时)。
+fn run_ocr_engines(
+    app: &tauri::AppHandle,
+    image_path: &std::path::Path,
+) -> Result<OcrDoneInfo, String> {
+    use crate::ocr::OcrEngine;
+
+    let wechat = crate::ocr::WechatOcrEngine::with_app(app);
+    let rapid = crate::ocr::RapidOcrEngine::with_app(app);
+
+    let mut errors: Vec<String> = Vec::new();
+
+    if wechat.available() {
+        match wechat.recognize(image_path) {
+            Ok(r) => {
+                return Ok(OcrDoneInfo {
+                    text: r.text,
+                    source: r.source,
+                })
+            }
+            Err(e) => errors.push(format!("WeChatOCR: {e}")),
+        }
+    } else {
+        errors.push("WeChatOCR: 引擎文件缺失(请重新安装 ClipNest)".to_string());
+    }
+
+    // 仅在 RapidOCR 完整可用(Python + 脚本都在)时才兜底,避免误触发 pip 安装卡死。
+    if rapid.available() {
+        match rapid.recognize(image_path) {
+            Ok(r) => {
+                return Ok(OcrDoneInfo {
+                    text: r.text,
+                    source: r.source,
+                })
+            }
+            Err(e) => errors.push(format!("RapidOCR: {e}")),
+        }
+    }
+
+    Err(errors.join("; "))
 }
 
 #[tauri::command]

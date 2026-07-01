@@ -39,9 +39,19 @@ fn resolve_exe_path(app: &AppHandle) -> Option<PathBuf> {
     }
 
     if let Ok(dir) = app.path().resource_dir() {
-        let candidate = dir.join(RESOURCE_EXE_REL);
-        if candidate.exists() && exe_has_data(&candidate) {
-            return Some(candidate);
+        // Tauri v2 打包时 bundle.resources 配置写的是 "resources/ocr_host/**/*",
+        // 这个相对结构会原样保留到 resource_dir() 下,所以真实路径是
+        // resource_dir()/resources/ocr_host/wcocr.exe(多一层 "resources")。
+        // 老代码只试了不带 "resources" 的路径,导致 release 下永远找不到引擎。
+        // 这里两种都试,兼容不同打包布局。
+        let candidates = [
+            dir.join("resources").join(RESOURCE_EXE_REL),
+            dir.join(RESOURCE_EXE_REL),
+        ];
+        for candidate in candidates {
+            if candidate.exists() && exe_has_data(&candidate) {
+                return Some(candidate);
+            }
         }
     }
 
@@ -90,36 +100,70 @@ impl OcrEngine for WechatOcrEngine {
             .arg("--json")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
         if let Some(dir) = exe.parent() {
             cmd.current_dir(dir);
         }
         let mut child = cmd.spawn().map_err(|e| OcrError::SpawnFailed(e.to_string()))?;
 
-        loop {
+        // 同 rapidocr: Windows pipe buffer ~64KB,必须 drain stdout/stderr,否则子进程会阻塞写入
+        // 主线程的 try_wait 永远拿不到 Some(_) → 必然 30s 超时。
+        let stdout_pipe = child.stdout.take().ok_or_else(|| {
+            OcrError::SpawnFailed("子进程 stdout 未配置为 piped".into())
+        })?;
+        let stderr_pipe = child.stderr.take().ok_or_else(|| {
+            OcrError::SpawnFailed("子进程 stderr 未配置为 piped".into())
+        })?;
+        let stdout_handle = std::thread::spawn(move || {
+            use std::io::Read;
+            let mut pipe = stdout_pipe;
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        });
+        let stderr_handle = std::thread::spawn(move || {
+            use std::io::Read;
+            let mut pipe = stderr_pipe;
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        });
+
+        let exit_status = loop {
             if started.elapsed() > OCR_TIMEOUT {
                 let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
                 return Err(OcrError::Timeout);
             }
             match child
                 .try_wait()
                 .map_err(|e| OcrError::SpawnFailed(e.to_string()))?
             {
-                Some(_) => break,
+                Some(status) => break status,
                 None => std::thread::sleep(std::time::Duration::from_millis(50)),
             }
-        }
+        };
 
-        let output = child
-            .wait_with_output()
-            .map_err(|e| OcrError::SpawnFailed(e.to_string()))?;
-        if !output.status.success() {
+        let stdout_bytes = stdout_handle.join().unwrap_or_default();
+        let stderr_bytes = stderr_handle.join().unwrap_or_default();
+
+        if !exit_status.success() {
             return Err(OcrError::NonZeroExit {
-                code: output.status.code(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                code: exit_status.code(),
+                stderr: String::from_utf8_lossy(&stderr_bytes).to_string(),
             });
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout = String::from_utf8_lossy(&stdout_bytes);
         parse_wechat_output(&stdout)
     }
 }

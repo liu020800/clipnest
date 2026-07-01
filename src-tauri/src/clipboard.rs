@@ -3,6 +3,9 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 const HISTORY_POLL_INTERVAL_MS: u64 = 700;
 const HISTORY_TITLE_MAX_CHARS: usize = 30;
+// 写入剪贴板后,这段时间内同样内容被监听线程读到时不会进历史。
+// 700ms 轮询 + 70ms 粘贴前置等待 + 安全冗余,2 秒可覆盖单次 copy/paste 链路。
+const SELF_WRITE_SUPPRESS_MS: u64 = 2000;
 
 pub fn write_text_to_clipboard<R: Runtime>(
     app: &tauri::AppHandle<R>,
@@ -13,7 +16,16 @@ pub fn write_text_to_clipboard<R: Runtime>(
 
     for attempt in 0..3 {
         match app.clipboard().write_text(text) {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                // 标记自写: 让 start_clipboard_history_monitor 在 SELF_WRITE_SUPPRESS_MS 内
+                // 看到相同 text 时直接跳过,避免「从历史粘贴 → 自己又被插回顶部」的回环。
+                if let Some(state) = app.try_state::<crate::AppState>() {
+                    if let Ok(mut slot) = state.last_self_write.lock() {
+                        *slot = Some((text.to_string(), std::time::Instant::now()));
+                    }
+                }
+                return Ok(());
+            }
             Err(err) => {
                 last_error = err.to_string();
                 if attempt < 2 {
@@ -84,6 +96,29 @@ pub fn start_clipboard_history_monitor(app: tauri::AppHandle) {
             }
             last_seen = text.clone();
 
+            // 抑制窗口检查: 如果这段文本是我们刚 write_text_to_clipboard 写进去的
+            // (典型场景: 用户从搜索历史 Enter 粘贴),不要再当成一次「新复制」插历史。
+            if let Some(state) = app.try_state::<crate::AppState>() {
+                if let Ok(mut slot) = state.last_self_write.lock() {
+                    if let Some((cached, ts)) = slot.as_ref() {
+                        if cached == &text
+                            && ts.elapsed()
+                                < std::time::Duration::from_millis(SELF_WRITE_SUPPRESS_MS)
+                        {
+                            // 命中抑制: 顺手清掉标记,避免长期占用。
+                            *slot = None;
+                            continue;
+                        }
+                        // 过期标记顺带清理。
+                        if ts.elapsed()
+                            >= std::time::Duration::from_millis(SELF_WRITE_SUPPRESS_MS)
+                        {
+                            *slot = None;
+                        }
+                    }
+                }
+            }
+
             let trimmed = text.trim();
             if trimmed.is_empty() {
                 continue;
@@ -104,11 +139,7 @@ pub fn start_clipboard_history_monitor(app: tauri::AppHandle) {
             }
 
             let title = clipboard_history_title(trimmed, HISTORY_TITLE_MAX_CHARS);
-            if let Err(e) =
-                db.upsert_clipboard_history(&title, trimmed, settings.clipboard_history_max)
-            {
-                eprintln!("[clipboard-history] failed to save clipboard text: {e}");
-            }
+            let _ = db.upsert_clipboard_history(&title, trimmed, settings.clipboard_history_max);
         }
     });
 }

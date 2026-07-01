@@ -7,6 +7,29 @@
 
 ---
 
+## [1.1.3] - 2026-07-01
+
+窗口闪烁问题修复版本。
+
+### 修复
+
+- 修复按 OCR 快捷键（Ctrl+Shift+O）时屏幕闪烁的问题。
+  - 原因：窗口最大化动画导致屏幕短暂闪烁。
+  - 解决方案：使用 Monitor API 获取主显示器尺寸，直接将窗口设置为全屏大小，跳过最大化动画。
+  - 涉及文件：`src/windows/ScreenOcrWindow.tsx`
+
+- 修复 OCR 识别过程中终端窗口闪烁的问题（已在之前版本修复）。
+  - 原因：子进程启动时未设置 CREATE_NO_WINDOW 标志。
+  - 解决方案：为所有子进程调用（RapidOCR Python、WeChatOCR、explorer.exe）添加 CREATE_NO_WINDOW 标志。
+  - 涉及文件：`src-tauri/src/ocr/rapidocr.rs`、`src-tauri/src/commands.rs`
+
+### 验证
+
+- 本地测试 OCR 快捷键无屏幕闪烁
+- 本地测试 OCR 识别过程无终端窗口闪烁
+
+---
+
 ## [1.1.2] - 2026-06-11
 
 剪贴板历史粘贴与启动稳定性修复版本。

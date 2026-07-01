@@ -84,7 +84,6 @@ impl Database {
         )?;
 
         let current = self.get_schema_version().unwrap_or(0);
-        eprintln!("[db] schema_version current = {current}");
 
         // Migration 1: add pinyin column for pre-v1.0 databases
         if current < 1 {
@@ -146,6 +145,16 @@ impl Database {
             END;
             ",
         )?;
+
+        // Migration 5 (v1.1.x): 老用户的 FTS 表在 v1.0 时为空(老数据 INSERT 时
+        // 还没有 trigger),升级后 trigger 只对新写入生效,历史数据搜不到。
+        // rebuild 必须在 FTS 虚拟表与 trigger 创建之后执行,所以放在这里而非
+        // 上面的 ensure_column 迁移块里。
+        if current < 5 {
+            self.conn
+                .execute_batch("INSERT INTO snippets_fts(snippets_fts) VALUES('rebuild');")?;
+            self.set_schema_version(5)?;
+        }
         Ok(())
     }
 
@@ -167,7 +176,6 @@ impl Database {
     }
 
     fn set_schema_version(&self, v: i64) -> Result<(), rusqlite::Error> {
-        eprintln!("[db] migrating to schema_version {v}");
         self.conn.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
             params![v.to_string()],
@@ -182,10 +190,8 @@ impl Database {
             .filter_map(|r| r.ok())
             .collect();
         if cols.iter().any(|c| c.eq_ignore_ascii_case(column)) {
-            eprintln!("[db] column {table}.{column} already exists, skip");
             return Ok(());
         }
-        eprintln!("[db] ALTER TABLE {table} ADD COLUMN {column}");
         self.conn
             .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))?;
         Ok(())
@@ -238,7 +244,9 @@ impl Database {
         content: &str,
         max_history: i64,
     ) -> Result<i64, rusqlite::Error> {
-        if let Some(existing) = self.find_by_content(content)? {
+        // 必须只匹配 source_app = 'clipboard-history' 的记录。否则用户手动保存为正式片段后,
+        // 再次复制相同内容会把已 promote 的用户片段时间戳刷新,破坏 source 分类与数据完整性。
+        if let Some(existing) = self.find_clipboard_history_by_content(content)? {
             self.conn.execute(
                 "UPDATE snippets
                  SET created_at = datetime('now', 'localtime'),
@@ -246,6 +254,11 @@ impl Database {
                  WHERE id = ?1",
                 params![existing.id],
             )?;
+            return Ok(existing.id);
+        }
+        // 已经被用户 promote 成正式片段(source_app IS NULL)时,不再插入剪贴板历史,直接返回该 id,
+        // 避免出现两条同 content 的记录。
+        if let Some(existing) = self.find_user_saved_by_content(content)? {
             return Ok(existing.id);
         }
 
@@ -844,7 +857,6 @@ pub fn backup_database_file(
             .map_err(|e| e.to_string())?;
     }
     let _ = dest_conn.close();
-    eprintln!("[db] backup created at {}", dest.display());
     Ok(dest)
 }
 
@@ -1044,6 +1056,49 @@ mod tests {
         let loaded = db.get_snippet_by_id(id).unwrap().unwrap();
         assert_eq!(loaded.content, "识别后的文字");
         assert_eq!(loaded.ocr_status.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn fts_rebuild_migration_indexes_legacy_rows() {
+        // 模拟老用户: 升级前 FTS 表没有覆盖历史数据,schema_version 退回 4。
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let pid = std::process::id();
+        let path = std::env::temp_dir().join(format!("copyliusq-ftsmig-{}-{}.db", pid, n));
+        let path_str = path.to_str().unwrap().to_string();
+
+        {
+            let db = Database::new(&path_str).expect("open db");
+            // 插入一条记录(trigger 会写 FTS),随后清空 FTS 并把版本退回 4,
+            // 还原"老库里有数据但 FTS 为空"的状态。
+            db.conn
+                .execute(
+                    "INSERT INTO snippets (title, content, pinyin, type, tags) VALUES ('遗留标题', '遗留内容关键字', '', 'text', NULL)",
+                    [],
+                )
+                .unwrap();
+            db.conn.execute("DELETE FROM snippets_fts", []).unwrap();
+            db.conn
+                .execute(
+                    "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '4')",
+                    [],
+                )
+                .unwrap();
+            // 确认退回状态下确实搜不到。
+            // 注意: FTS5 默认 unicode61 分词器把整段 CJK 视作单个 token,
+            // build_fts_query 走前缀匹配,所以用 token 前缀 "遗留内容" 来检索。
+            assert!(
+                db.search("遗留内容", 10).unwrap().is_empty(),
+                "前置条件: FTS 清空后老数据不可被搜索"
+            );
+        }
+
+        // 重新开库 → 触发 migration 5 rebuild。
+        let db = Database::new(&path_str).expect("reopen db");
+        let found = db.search("遗留内容", 10).unwrap();
+        assert!(
+            found.iter().any(|s| s.content.contains("遗留内容关键字")),
+            "migration 5 rebuild 后,老数据应能被 FTS 搜索命中"
+        );
     }
 
     #[test]

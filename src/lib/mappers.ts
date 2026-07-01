@@ -1,7 +1,25 @@
 // Snippet → ClipItem 映射
-import type { ClipItem, Snippet } from "../types";
+import type { ClipboardContentType, ClipItem, Snippet } from "../types";
 import { formatTime } from "./utils";
 import { analyzeClipboardContent } from "./analyze";
+
+const ALLOWED_TYPES: ReadonlySet<string> = new Set<ClipboardContentType>([
+  "code",
+  "url",
+  "prompt",
+  "text",
+  "image",
+]);
+
+function normalizeType(
+  raw: string | null | undefined,
+  fallback: ClipboardContentType,
+): ClipboardContentType {
+  if (raw && ALLOWED_TYPES.has(raw)) {
+    return raw as ClipboardContentType;
+  }
+  return fallback;
+}
 
 export function snippetToClipItem(s: Snippet): ClipItem {
   const analysis = s.type === "image"
@@ -18,7 +36,7 @@ export function snippetToClipItem(s: Snippet): ClipItem {
     tags,
     time: formatTime(s.created_at),
     savedAt: s.created_at,
-    type: (s.type as ClipItem["type"]) ?? analysis.type,
+    type: normalizeType(s.type, analysis.type),
     pinned: s.pinned,
     image_path: s.image_path ?? null,
     image_dim_w: s.image_dim_w ?? null,

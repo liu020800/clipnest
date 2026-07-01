@@ -27,14 +27,28 @@ pub fn find_python() -> Option<PathBuf> {
         }
     }
     for cmd in &["py", "python", "python3"] {
-        if let Ok(out) = std::process::Command::new(cmd).arg("--version").output() {
+        let mut version_cmd = std::process::Command::new(cmd);
+        version_cmd.arg("--version");
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            version_cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        if let Ok(out) = version_cmd.output() {
             if out.status.success() {
                 // `py` (Windows launcher) 与 `python` 都返回可执行路径
-                if let Ok(path) = std::process::Command::new(cmd)
+                let mut path_cmd = std::process::Command::new(cmd);
+                path_cmd
                     .arg("-c")
-                    .arg("import sys; print(sys.executable)")
-                    .output()
+                    .arg("import sys; print(sys.executable)");
+                #[cfg(target_os = "windows")]
                 {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x08000000;
+                    path_cmd.creation_flags(CREATE_NO_WINDOW);
+                }
+                if let Ok(path) = path_cmd.output() {
                     if path.status.success() {
                         let s = String::from_utf8_lossy(&path.stdout).trim().to_string();
                         if !s.is_empty() {
@@ -72,9 +86,17 @@ fn resolve_script_path(app: &AppHandle) -> Option<PathBuf> {
         }
     }
     if let Ok(dir) = app.path().resource_dir() {
-        let candidate = dir.join(SUBDIR).join("rcr_ocr.py");
-        if candidate.exists() {
-            return Some(candidate);
+        // Tauri v2 打包时会保留 bundle.resources 里配置的相对路径结构 ("resources/..."),
+        // 所以真实路径是 resource_dir()/resources/rapidocr/rcr_ocr.py。这里两种都试,
+        // 兼容不同 Tauri 版本/打包器对 resource_dir 根的差异。
+        let candidates = [
+            dir.join("resources").join(SUBDIR).join("rcr_ocr.py"),
+            dir.join(SUBDIR).join("rcr_ocr.py"),
+        ];
+        for candidate in candidates {
+            if candidate.exists() {
+                return Some(candidate);
+            }
         }
     }
     None
@@ -136,44 +158,81 @@ impl OcrEngine for RapidOcrEngine {
         }
 
         let started = Instant::now();
-        let mut child = Command::new(python)
-            .arg(script)
+        let mut cmd = Command::new(python);
+        cmd.arg(script)
             .arg(image_path)
             .arg("--json")
             .env("PYTHONIOENCODING", "utf-8")
             .env("PYTHONUTF8", "1")
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let mut child = cmd
             .spawn()
             .map_err(|e| OcrError::SpawnFailed(e.to_string()))?;
 
-        // 用 try_wait 配合 sleep, 避免永久卡死
-        loop {
+        // Windows 上 pipe buffer 约 64KB,RapidOCR/PaddleOCR 初始化日志或大图识别结果一旦填满
+        // 就会让子进程在 write 上阻塞,主线程的 try_wait 永远拿不到退出 → 必然走到 30s 超时。
+        // 必须在 spawn 之后立刻起后台线程 drain stdout/stderr,主线程才能安全地 try_wait + timeout。
+        let stdout_pipe = child.stdout.take().ok_or_else(|| {
+            OcrError::SpawnFailed("子进程 stdout 未配置为 piped".into())
+        })?;
+        let stderr_pipe = child.stderr.take().ok_or_else(|| {
+            OcrError::SpawnFailed("子进程 stderr 未配置为 piped".into())
+        })?;
+        let stdout_handle = std::thread::spawn(move || {
+            use std::io::Read;
+            let mut pipe = stdout_pipe;
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        });
+        let stderr_handle = std::thread::spawn(move || {
+            use std::io::Read;
+            let mut pipe = stderr_pipe;
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        });
+
+        let exit_status = loop {
             if started.elapsed() > OCR_TIMEOUT {
                 let _ = child.kill();
+                let _ = child.wait();
+                // join 是为了释放 pipe 句柄,避免线程泄漏。
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
                 return Err(OcrError::Timeout);
             }
             match child
                 .try_wait()
                 .map_err(|e| OcrError::SpawnFailed(e.to_string()))?
             {
-                Some(_) => break,
+                Some(status) => break status,
                 None => std::thread::sleep(std::time::Duration::from_millis(50)),
             }
-        }
-        let output = child
-            .wait_with_output()
-            .map_err(|e| OcrError::SpawnFailed(e.to_string()))?;
-        if !output.status.success() {
-            let code = output.status.code().unwrap_or(-1);
+        };
+
+        let stdout_bytes = stdout_handle.join().unwrap_or_default();
+        let stderr_bytes = stderr_handle.join().unwrap_or_default();
+
+        if !exit_status.success() {
+            let code = exit_status.code().unwrap_or(-1);
             return Err(OcrError::NonZeroExit {
                 code: Some(code),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                stderr: String::from_utf8_lossy(&stderr_bytes).to_string(),
             });
         }
         // stdout 末尾可能有 RapidOCR 残余日志行, 我们要找到 JSON 起止。
         // 安全做法: 取最后一行 { 开头的 JSON object.
-        let buf = String::from_utf8_lossy(&output.stdout).into_owned();
+        let buf = String::from_utf8_lossy(&stdout_bytes).into_owned();
         parse_rapid_output(&buf)
     }
 }

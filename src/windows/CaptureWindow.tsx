@@ -159,15 +159,18 @@ export function CaptureWindow({
         void handleSaveRef.current?.();
       }
     };
+    // 仅注册一次 keydown。早期实现同时绑在 window 和 document 上,
+    // 会让 Enter 路径里的 handleSave 在一次按键内被触发两次,产生重复保存与 toast。
     window.addEventListener("keydown", onKeyDown, true);
-    document.addEventListener("keydown", onKeyDown, true);
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("keydown", onKeyDown, true);
     };
   }, [duplicate, analysis, onToast]);
 
   const handleSave = async () => {
+    // 防重入: 即使外层 button disabled / canSave 已经把同步路径挡掉,键盘路径
+    // (Enter / Ctrl+Enter setTimeout 50ms) 也可能在 setSaving(true) 落地前再次进入。
+    if (saving) return;
     if (!canSave) return;
     if (!clipboardText.trim()) {
       onToast("内容为空", "没有可保存的文本", "warning");

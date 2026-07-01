@@ -19,6 +19,7 @@ export function SearchWindow({
   const [selectedId, setSelectedId] = useState(0);
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<number | null>(null);
+  const loadSeqRef = useRef(0);
   const queryRef = useRef("");
   const categoryRef = useRef<CategoryKey>("all");
 
@@ -28,6 +29,7 @@ export function SearchWindow({
 
   const load = useCallback(
     async (q: string, cat: CategoryKey) => {
+      const seq = ++loadSeqRef.current;
       setLoading(true);
       try {
         const filter = categoryToFilter(cat);
@@ -39,20 +41,24 @@ export function SearchWindow({
           filterValue: filter.filterValue,
           limit: searchLimit,
         });
-        setItems(results.map(snippetToClipItem));
-        if (results.length > 0 && !results.find((i) => i.id === selectedId)) {
-          setSelectedId(results[0].id);
-        } else if (results.length === 0) {
-          setSelectedId(0);
-        }
+        if (seq !== loadSeqRef.current) return;
+        const nextItems = results.map(snippetToClipItem);
+        setItems(nextItems);
+        setSelectedId((current) => {
+          if (nextItems.length === 0) return 0;
+          return nextItems.some((i) => i.id === current) ? current : nextItems[0].id;
+        });
       } catch (e) {
+        if (seq !== loadSeqRef.current) return;
         console.error("load failed", e);
         setItems([]);
       } finally {
-        setLoading(false);
+        if (seq === loadSeqRef.current) {
+          setLoading(false);
+        }
       }
     },
-    [searchLimit, selectedId],
+    [searchLimit],
   );
 
   useEffect(() => {
@@ -92,7 +98,7 @@ export function SearchWindow({
       blurTimerRef.current = 0;
       unlisten();
     };
-  }, [load, category]);
+  }, [load]);
 
   useEffect(() => {
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
