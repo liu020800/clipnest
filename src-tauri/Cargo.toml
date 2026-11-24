@@ -9,6 +9,9 @@ edition = "2021"
 name = "copyliusq_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -32,6 +35,8 @@ screenshots = "0.8.10"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.60", features = [
   "Win32_Foundation",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }

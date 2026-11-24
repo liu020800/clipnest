@@ -43,6 +43,7 @@ export function ContentCard({
   return (
     <button
       type="button"
+      data-item-id={item.id}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       className={cn("content-card", selected && "content-card-selected")}

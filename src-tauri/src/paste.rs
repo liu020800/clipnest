@@ -8,7 +8,9 @@ mod platform {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL, VK_V,
     };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, SetForegroundWindow,
+    };
 
     pub fn foreground_window() -> Option<isize> {
         let hwnd = unsafe { GetForegroundWindow() };
@@ -23,10 +25,20 @@ mod platform {
         if let Some(hwnd) = hwnd {
             let hwnd = hwnd as HWND;
             if !hwnd.is_null() {
-                unsafe {
-                    SetForegroundWindow(hwnd);
+                let mut activated = false;
+                for _ in 0..10 {
+                    unsafe {
+                        SetForegroundWindow(hwnd);
+                        if GetForegroundWindow() == hwnd {
+                            activated = true;
+                            break;
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(40));
                 }
-                thread::sleep(Duration::from_millis(90));
+                if !activated {
+                    return Err("无法激活原目标窗口,已取消粘贴以避免粘到错误窗口".to_string());
+                }
             }
         }
 
@@ -101,11 +113,19 @@ pub fn paste_text<R: Runtime>(
     state: tauri::State<crate::AppState>,
     text: String,
 ) -> Result<(), String> {
+    paste_text_inner(&app, &state, text)
+}
+
+pub fn paste_text_inner<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &crate::AppState,
+    text: String,
+) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err("内容为空,无法粘贴".to_string());
     }
 
-    crate::clipboard::write_text_to_clipboard(&app, &text)?;
+    crate::clipboard::write_text_to_clipboard(app, &text)?;
     if let Ok(mut cache) = state.last_clipboard.lock() {
         *cache = text;
     }

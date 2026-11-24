@@ -171,18 +171,68 @@ pub fn toggle_pin(
 }
 
 #[tauri::command]
+pub fn copy_snippet_to_clipboard(
+    app: tauri::AppHandle,
+    state: tauri::State<crate::AppState>,
+    id: i64,
+) -> Result<(), String> {
+    let content = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_snippet_by_id(id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "内容不存在".to_string())?
+            .content
+    };
+
+    crate::clipboard::write_text_to_clipboard(&app, content)?;
+
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.record_snippet_use(id).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn paste_snippet(
+    app: tauri::AppHandle,
+    state: tauri::State<crate::AppState>,
+    id: i64,
+) -> Result<(), String> {
+    let content = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_snippet_by_id(id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "内容不存在".to_string())?
+            .content
+    };
+
+    crate::paste::paste_text_inner(&app, &state, content)?;
+
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.record_snippet_use(id).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn auto_tag_ai(
     state: tauri::State<'_, crate::AppState>,
     title: String,
     content: String,
 ) -> Result<ai::AiTagResult, String> {
-    let (enabled, endpoint, model, fallback) = {
+    let (enabled, provider, endpoint, model, api_key_env, fallback) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let s = Settings::load(&db);
+        let provider = s.ai_provider;
+        let (endpoint, model) = if provider == "openai_compatible" {
+            (s.openai_endpoint, s.openai_model)
+        } else {
+            (s.ollama_endpoint, s.ollama_model)
+        };
         (
             s.ai_enabled,
-            s.ollama_endpoint,
-            s.ollama_model,
+            provider,
+            endpoint,
+            model,
+            s.openai_api_key_env,
             s.ai_tag_fallback,
         )
     };
@@ -199,7 +249,13 @@ pub async fn auto_tag_ai(
         };
     }
 
-    match ai::ollama_tag(&content, &title, &endpoint, &model).await {
+    let result = if provider == "openai_compatible" {
+        ai::openai_compatible_tag(&content, &title, &endpoint, &model, &api_key_env).await
+    } else {
+        ai::ollama_tag(&content, &title, &endpoint, &model).await
+    };
+
+    match result {
         Ok(mut r) => {
             // AI 摘要目前不写入数据库(避免 schema 变更),
             // 仅返回给前端展示,后端 source 标记 "ai"

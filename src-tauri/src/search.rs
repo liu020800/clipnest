@@ -63,7 +63,7 @@ fn like_fallback(
         "SELECT id, title, content, type, tags, source_app, created_at, updated_at, pinned, pinyin, image_path, image_dim_w, image_dim_h, ocr_status
          FROM snippets
          WHERE title LIKE ?1 OR content LIKE ?1 OR tags LIKE ?1 OR pinyin LIKE ?1
-         ORDER BY pinned DESC, created_at DESC
+         ORDER BY pinned DESC, COALESCE(last_used_at, created_at) DESC, usage_count DESC, created_at DESC, id DESC
          LIMIT ?2",
     ).map_err(|e| e.to_string())?;
     let rows = stmt
@@ -143,7 +143,7 @@ fn list_snippets_inner(
             "SELECT id, title, content, type, tags, source_app, created_at, updated_at, pinned, pinyin, image_path, image_dim_w, image_dim_h, ocr_status
              FROM snippets
              WHERE type = ?1
-             ORDER BY pinned DESC, created_at DESC
+             ORDER BY pinned DESC, COALESCE(last_used_at, created_at) DESC, usage_count DESC, created_at DESC, id DESC
              LIMIT ?2",
         ).map_err(|e| e.to_string())?;
         let rows = stmt
@@ -165,7 +165,7 @@ fn list_snippets_inner(
             "SELECT id, title, content, type, tags, source_app, created_at, updated_at, pinned, pinyin, image_path, image_dim_w, image_dim_h, ocr_status
              FROM snippets
              WHERE tags = ?1 OR tags LIKE ?2 OR tags LIKE ?3 OR tags LIKE ?4
-             ORDER BY pinned DESC, created_at DESC
+             ORDER BY pinned DESC, COALESCE(last_used_at, created_at) DESC, usage_count DESC, created_at DESC, id DESC
              LIMIT ?5",
         ).map_err(|e| e.to_string())?;
         let rows = stmt
@@ -182,11 +182,11 @@ fn list_snippets_inner(
     // Free-text search via FTS5 (fall back to LIKE on error).
     let q = args.query.trim();
     if !is_valid_term(q) {
-        return db.get_recent(limit).map_err(|e| e.to_string());
+        return db.get_prioritized(limit).map_err(|e| e.to_string());
     }
     let fts = match build_fts_query(q) {
         Some(s) => s,
-        None => return db.get_recent(limit).map_err(|e| e.to_string()),
+        None => return db.get_prioritized(limit).map_err(|e| e.to_string()),
     };
     let result = db.fts_search(&fts, limit);
     match result {

@@ -32,6 +32,7 @@ pub struct AppState {
 fn build_window<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     label: &str,
+    open_on_startup: bool,
 ) -> Result<(), tauri::Error> {
     let mut builder = tauri::WebviewWindowBuilder::new(
         app,
@@ -43,14 +44,15 @@ fn build_window<R: tauri::Runtime>(
     .decorations(false)
     .skip_taskbar(true)
     .transparent(true)
-    .visible(false);
+    .visible(label == "search" && open_on_startup);
 
     match label {
         "search" => {
             builder = builder
                 .title("ClipNest 搜索")
                 .inner_size(900.0, 580.0)
-                .min_inner_size(700.0, 420.0);
+                .min_inner_size(700.0, 420.0)
+                .always_on_top(window_should_stay_on_top(label));
         }
         "settings" => {
             builder = builder
@@ -66,14 +68,14 @@ fn build_window<R: tauri::Runtime>(
                 .inner_size(560.0, 500.0)
                 .min_inner_size(500.0, 440.0)
                 .max_inner_size(640.0, 600.0)
-                .always_on_top(true)
+                .always_on_top(window_should_stay_on_top(label))
                 .resizable(false);
         }
         "screen_ocr" => {
             builder = builder
                 .title("框选识别")
                 .fullscreen(true)
-                .always_on_top(true)
+                .always_on_top(window_should_stay_on_top(label))
                 .skip_taskbar(true)
                 .decorations(false)
                 .transparent(true)
@@ -88,6 +90,14 @@ fn build_window<R: tauri::Runtime>(
 
 fn window_app_path(label: &str) -> String {
     format!("index.html?window={label}")
+}
+
+fn window_should_stay_on_top(label: &str) -> bool {
+    matches!(label, "search" | "capture" | "screen_ocr")
+}
+
+fn should_open_search_on_startup(args: impl IntoIterator<Item = impl AsRef<str>>) -> bool {
+    !args.into_iter().any(|arg| arg.as_ref() == "--background")
 }
 
 pub fn show_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>, label: &str) {
@@ -114,12 +124,14 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec!["--background"]),
         ));
 
     #[cfg(not(debug_assertions))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-        show_window(app, "search");
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        if should_open_search_on_startup(argv.iter().skip(1)) {
+            show_window(app, "search");
+        }
     }));
 
     builder
@@ -159,18 +171,15 @@ pub fn run() {
             });
 
             // Pre-create all windows to avoid on-demand creation freezes
+            let open_on_startup = should_open_search_on_startup(std::env::args().skip(1));
             for label in ["search", "settings", "capture", "screen_ocr"] {
-                let _ = build_window(&app_handle, label);
+                let _ = build_window(&app_handle, label, open_on_startup);
             }
 
             tray::setup_tray(&app_handle)?;
 
             hotkeys::register_shortcuts(&app_handle);
             clipboard::start_clipboard_history_monitor(app_handle.clone());
-
-            // Keep startup quiet. Showing a transparent WebView during Windows login can
-            // leave it stuck blank until the whole app is restarted; users open it from
-            // the tray, hotkey, or second launch instead.
 
             Ok(())
         })
@@ -188,6 +197,8 @@ pub fn run() {
             commands::save_snippet_force,
             commands::delete_snippet,
             commands::toggle_pin,
+            commands::copy_snippet_to_clipboard,
+            commands::paste_snippet,
             commands::auto_tag_ai,
             commands::update_snippet,
             commands::export_markdown,
@@ -232,11 +243,34 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::window_app_path;
+    use super::{should_open_search_on_startup, window_app_path, window_should_stay_on_top};
+
+    #[test]
+    fn manual_launch_opens_search() {
+        assert!(should_open_search_on_startup(std::iter::empty::<&str>()));
+    }
+
+    #[test]
+    fn autostart_launch_stays_in_background() {
+        assert!(!should_open_search_on_startup(["--background"]));
+    }
+
+    #[test]
+    fn background_flag_must_match_exactly() {
+        assert!(should_open_search_on_startup(["--background-other"]));
+    }
 
     #[test]
     fn window_app_path_pins_the_frontend_window_route() {
         assert_eq!(window_app_path("search"), "index.html?window=search");
         assert_eq!(window_app_path("capture"), "index.html?window=capture");
+    }
+
+    #[test]
+    fn transient_tool_windows_stay_above_foreground_apps() {
+        assert!(window_should_stay_on_top("search"));
+        assert!(window_should_stay_on_top("capture"));
+        assert!(window_should_stay_on_top("screen_ocr"));
+        assert!(!window_should_stay_on_top("settings"));
     }
 }

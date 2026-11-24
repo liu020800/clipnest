@@ -21,16 +21,15 @@ dist-ssr
 
 # Rust / Tauri
 src-tauri/target/
+src-tauri/target-work/
 src-tauri/gen/
-src-tauri/Cargo.lock
 *.rs.bk
 
 # Release artifacts (published via GitHub Releases, not committed)
 releases/
 
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
+.vscode/
 .idea
 .DS_Store
 *.suo
@@ -41,6 +40,7 @@ releases/
 
 # Tooling
 .codex-logs/
+.claude/settings.local.json
 
 # C# / .NET (scripts/ocr_host probe)
 scripts/ocr_host/bin/

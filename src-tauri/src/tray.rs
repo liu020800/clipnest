@@ -7,7 +7,7 @@ pub const TRAY_ID: &str = "main-tray";
 
 pub fn setup_tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     let show = MenuItemBuilder::with_id("show", "打开搜索")
-        .accelerator("Alt+Space")
+        .accelerator("Ctrl+Alt+Space")
         .build(app)?;
     let settings = MenuItemBuilder::with_id("settings", "设置").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
@@ -64,7 +64,7 @@ pub fn setup_tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
 
 pub fn refresh_tray_menu<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     let show = MenuItemBuilder::with_id("show", "打开搜索")
-        .accelerator("Alt+Space")
+        .accelerator("Ctrl+Alt+Space")
         .build(app)?;
     let settings = MenuItemBuilder::with_id("settings", "设置").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
@@ -139,7 +139,13 @@ fn copy_snippet_to_clipboard<R: Runtime>(app: &tauri::AppHandle<R>, id: i64) {
         if let Ok(db) = state.db.lock() {
             if let Ok(Some(snippet)) = db.get_snippet_by_id(id) {
                 drop(db);
-                let _ = crate::clipboard::write_text_to_clipboard(app, snippet.content);
+                if crate::clipboard::write_text_to_clipboard(app, snippet.content).is_ok() {
+                    if let Some(state) = app.try_state::<crate::AppState>() {
+                        if let Ok(db) = state.db.lock() {
+                            let _ = db.record_snippet_use(id);
+                        }
+                    }
+                }
             }
         }
     }

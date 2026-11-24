@@ -21,6 +21,13 @@ pub struct Snippet {
     pub ocr_status: Option<String>,
 }
 
+/// Default library order: pinned items first, then whatever the user touched
+/// most recently (a fresh copy or a paste both count). Usage count only breaks
+/// ties inside the same recency bucket, so an item that was popular weeks ago
+/// can no longer sit above something copied a minute ago.
+const PRIORITIZED_ORDER: &str = "pinned DESC, COALESCE(last_used_at, created_at) DESC, \
+     usage_count DESC, created_at DESC, id DESC";
+
 pub struct Database {
     conn: Connection,
 }
@@ -70,7 +77,9 @@ impl Database {
                 source_app TEXT,
                 created_at DATETIME DEFAULT (datetime('now', 'localtime')),
                 updated_at DATETIME DEFAULT (datetime('now', 'localtime')),
-                pinned INTEGER DEFAULT 0
+                pinned INTEGER DEFAULT 0,
+                usage_count INTEGER DEFAULT 0,
+                last_used_at DATETIME
             );
             ",
         )?;
@@ -155,6 +164,26 @@ impl Database {
                 .execute_batch("INSERT INTO snippets_fts(snippets_fts) VALUES('rebuild');")?;
             self.set_schema_version(5)?;
         }
+        // Migration 6: record how often a snippet is reused so the default
+        // library view can keep frequently used items directly below pins.
+        if current < 6 {
+            self.ensure_column("snippets", "usage_count", "INTEGER DEFAULT 0")?;
+            self.ensure_column("snippets", "last_used_at", "DATETIME")?;
+            self.set_schema_version(6)?;
+        }
+        // Migration 7: move the search shortcut away from Alt+Space.
+        // Alt+Space is reserved by the system menu in many Windows apps and
+        // collides with focused windows such as Codex++.
+        if current < 7 {
+            self.migrate_search_shortcut_default()?;
+            self.set_schema_version(7)?;
+        }
+        // Migration 8: repair installs that already recorded schema version 7
+        // before the shortcut migration was applied.
+        if current < 8 {
+            self.migrate_search_shortcut_default()?;
+            self.set_schema_version(8)?;
+        }
         Ok(())
     }
 
@@ -194,6 +223,16 @@ impl Database {
         }
         self.conn
             .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))?;
+        Ok(())
+    }
+
+    fn migrate_search_shortcut_default(&self) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "UPDATE settings
+             SET value = 'Ctrl+Alt+Space'
+             WHERE key = 'search_shortcut' AND value = 'Alt+Space'",
+            [],
+        )?;
         Ok(())
     }
 
@@ -249,8 +288,9 @@ impl Database {
         if let Some(existing) = self.find_clipboard_history_by_content(content)? {
             self.conn.execute(
                 "UPDATE snippets
-                 SET created_at = datetime('now', 'localtime'),
-                     updated_at = datetime('now', 'localtime')
+                 SET created_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime'),
+                     updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime'),
+                     last_used_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime')
                  WHERE id = ?1",
                 params![existing.id],
             )?;
@@ -266,8 +306,9 @@ impl Database {
         let tags = "剪贴板";
         let pinyin = generate_pinyin(&format!("{title} {content} {tags}"));
         self.conn.execute(
-            "INSERT INTO snippets (title, content, pinyin, type, tags, source_app)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'clipboard-history')",
+            "INSERT INTO snippets (title, content, pinyin, type, tags, source_app, last_used_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'clipboard-history',
+                     strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime'))",
             params![title, content, pinyin, snippet_type, tags],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -371,7 +412,7 @@ impl Database {
 
     pub fn search(&self, query: &str, limit: i64) -> Result<Vec<Snippet>, rusqlite::Error> {
         if query.trim().is_empty() {
-            return self.get_recent(limit);
+            return self.get_prioritized(limit);
         }
         let fts_query = build_fts_query(query);
         if fts_query.is_empty() {
@@ -399,7 +440,9 @@ impl Database {
              FROM snippets s
              JOIN snippets_fts fts ON s.id = fts.rowid
              WHERE snippets_fts MATCH ?1
-             ORDER BY s.pinned DESC, rank, s.created_at DESC
+             ORDER BY s.pinned DESC, rank,
+                      COALESCE(s.last_used_at, s.created_at) DESC,
+                      s.usage_count DESC, s.created_at DESC, s.id DESC
              LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![fts_query, limit], |row| row_to_snippet(row))?;
@@ -448,6 +491,18 @@ impl Database {
         rows.collect()
     }
 
+    pub fn get_prioritized(&self, limit: i64) -> Result<Vec<Snippet>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT id, title, content, type, tags, source_app, created_at, updated_at, pinned
+                    , pinyin, image_path, image_dim_w, image_dim_h, ocr_status
+             FROM snippets
+             ORDER BY {PRIORITIZED_ORDER}
+             LIMIT ?1"
+        ))?;
+        let rows = stmt.query_map(params![limit], |row| row_to_snippet(row))?;
+        rows.collect()
+    }
+
     pub fn get_recent(&self, limit: i64) -> Result<Vec<Snippet>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, content, type, tags, source_app, created_at, updated_at, pinned
@@ -458,6 +513,17 @@ impl Database {
         )?;
         let rows = stmt.query_map(params![limit], |row| row_to_snippet(row))?;
         rows.collect()
+    }
+
+    pub fn record_snippet_use(&self, id: i64) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "UPDATE snippets
+             SET usage_count = COALESCE(usage_count, 0) + 1,
+                 last_used_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime')
+             WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
     }
 
     pub fn toggle_pin(&self, id: i64) -> Result<(), rusqlite::Error> {
@@ -577,11 +643,15 @@ impl Database {
         let pairs: &[(&str, &str)] = &[
             ("capture_shortcut", "Ctrl+Shift+S"),
             ("capture_shortcut_alt", "Alt+W"),
-            ("search_shortcut", "Alt+Space"),
+            ("search_shortcut", "Ctrl+Alt+Space"),
             ("screen_ocr_shortcut", "Ctrl+Shift+O"),
             ("title_max_length", "10"),
             ("ollama_model", "qwen3:4b"),
             ("ai_enabled", "false"),
+            ("ai_provider", "ollama"),
+            ("openai_endpoint", "https://api.openai.com/v1"),
+            ("openai_model", "gpt-4o-mini"),
+            ("openai_api_key_env", "OPENAI_API_KEY"),
             ("search_limit", "50"),
             ("search_debounce_ms", "150"),
             ("auto_close_on_blur", "true"),
@@ -918,7 +988,32 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!(v.parse::<i64>().unwrap() >= 2);
+        assert!(v.parse::<i64>().unwrap() >= 8);
+    }
+
+    #[test]
+    fn search_shortcut_migration_moves_off_alt_space_default() {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let pid = std::process::id();
+        let path = std::env::temp_dir().join(format!("copyliusq-shortcut-{}-{}.db", pid, n));
+        let path_str = path.to_str().unwrap().to_string();
+
+        {
+            let db = Database::new(&path_str).expect("open db");
+            db.save_setting("search_shortcut", "Alt+Space").unwrap();
+            db.conn
+                .execute(
+                    "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '6')",
+                    [],
+                )
+                .unwrap();
+        }
+
+        let db = Database::new(&path_str).expect("reopen db");
+        assert_eq!(
+            db.get_setting("search_shortcut").unwrap().as_deref(),
+            Some("Ctrl+Alt+Space")
+        );
     }
 
     #[test]
@@ -1013,6 +1108,108 @@ mod tests {
         let r = db.fts_search("\"docker\"*", 10).unwrap();
         assert_eq!(r.len(), 2);
         assert!(r[0].pinned, "pinned item should be first");
+    }
+
+    #[test]
+    fn prioritized_list_keeps_pins_above_frequently_used_items() {
+        let db = temp_db();
+        let pinned = db.insert_snippet("pinned", "always first", None).unwrap();
+        let low_use = db.insert_snippet("low", "used once", None).unwrap();
+        let high_use = db.insert_snippet("high", "used often", None).unwrap();
+
+        db.toggle_pin(pinned).unwrap();
+        db.record_snippet_use(low_use).unwrap();
+        db.record_snippet_use(high_use).unwrap();
+        db.record_snippet_use(high_use).unwrap();
+
+        let ids = db
+            .get_prioritized(10)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids[0], pinned, "pinned item should remain first");
+        assert_eq!(
+            &ids[1..],
+            &[high_use, low_use],
+            "items with no recent use fall back to usage count ordering"
+        );
+    }
+
+    #[test]
+    fn freshly_copied_item_outranks_old_frequently_used_items() {
+        let db = temp_db();
+        let pinned = db.insert_snippet("pinned", "always first", None).unwrap();
+        let old_popular = db.insert_snippet("old popular", "used many times", None).unwrap();
+        db.toggle_pin(pinned).unwrap();
+
+        // Simulate an item that was used heavily a long time ago.
+        for _ in 0..20 {
+            db.record_snippet_use(old_popular).unwrap();
+        }
+        db.conn
+            .execute(
+                "UPDATE snippets
+                 SET last_used_at = datetime('now', 'localtime', '-30 days'),
+                     created_at = datetime('now', 'localtime', '-30 days')
+                 WHERE id = ?1",
+                params![old_popular],
+            )
+            .unwrap();
+
+        // A brand-new copy should be the second row, right after the pin.
+        let fresh = db
+            .upsert_clipboard_history("fresh", "just copied text", 500)
+            .unwrap();
+
+        let ids = db
+            .get_prioritized(50)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids[0], pinned);
+        assert_eq!(ids[1], fresh, "a fresh copy must appear below pins");
+        assert!(
+            ids.iter().position(|id| *id == old_popular).unwrap() > 1,
+            "an old popular item must not outrank a fresh copy"
+        );
+    }
+
+    #[test]
+    fn recopying_history_moves_it_back_to_the_top() {
+        let db = temp_db();
+        let older = db
+            .upsert_clipboard_history("older", "older clipboard text", 500)
+            .unwrap();
+        db.conn
+            .execute(
+                "UPDATE snippets
+                 SET created_at = datetime('now', 'localtime', '-10 days'),
+                     updated_at = datetime('now', 'localtime', '-10 days'),
+                     last_used_at = datetime('now', 'localtime', '-10 days')
+                 WHERE id = ?1",
+                params![older],
+            )
+            .unwrap();
+        let newer = db
+            .upsert_clipboard_history("newer", "newer clipboard text", 500)
+            .unwrap();
+
+        // Re-copying the older content must promote it again.
+        db.upsert_clipboard_history("older", "older clipboard text", 500)
+            .unwrap();
+
+        let ids = db
+            .get_prioritized(10)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ids[0], older);
+        assert_eq!(ids[1], newer);
     }
 
     #[test]

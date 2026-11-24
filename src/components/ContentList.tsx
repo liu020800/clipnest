@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { Search } from "lucide-react";
 import { ContentCard } from "./ContentCard";
 import type { ClipItem } from "../types";
@@ -20,6 +20,17 @@ export function ContentList({
   onQueryChange: (q: string) => void;
   listRef?: React.RefObject<HTMLDivElement>;
 }) {
+  const internalListRef = useRef<HTMLDivElement>(null);
+  const activeListRef = listRef ?? internalListRef;
+
+  // Keep the selected row visible when moving with the arrow keys.
+  useEffect(() => {
+    const container = activeListRef.current;
+    if (!container) return;
+    const selected = container.querySelector<HTMLElement>(`[data-item-id="${selectedId}"]`);
+    selected?.scrollIntoView({ block: "nearest" });
+  }, [selectedId, activeListRef]);
+
   return (
     <section className="content-list">
       <div className="content-list-top">
@@ -34,7 +45,7 @@ export function ContentList({
           />
         </div>
       </div>
-      <div ref={listRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+      <div ref={activeListRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
         {items.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
             <p className="text-sm text-[var(--text-secondary)]">

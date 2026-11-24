@@ -47,8 +47,12 @@ pub struct Settings {
     pub auto_close_on_blur: bool,
     pub auto_close_delay_ms: u64,
     pub ai_enabled: bool,
+    pub ai_provider: String,
     pub ollama_endpoint: String,
     pub ollama_model: String,
+    pub openai_endpoint: String,
+    pub openai_model: String,
+    pub openai_api_key_env: String,
     pub ai_tag_fallback: String,
     pub auto_tag_on_capture: bool,
     pub capture_text_max_length: usize,
@@ -71,8 +75,21 @@ impl Settings {
             auto_close_on_blur: read_bool(db, "auto_close_on_blur", true),
             auto_close_delay_ms: read_usize(db, "auto_close_delay_ms", 150) as u64,
             ai_enabled: read_bool(db, "ai_enabled", false),
+            ai_provider: {
+                let value = read_string(db, "ai_provider", "ollama");
+                if value.eq_ignore_ascii_case("openai_compatible")
+                    || value.eq_ignore_ascii_case("openai-compatible")
+                {
+                    "openai_compatible".to_string()
+                } else {
+                    "ollama".to_string()
+                }
+            },
             ollama_endpoint: read_string(db, "ollama_endpoint", "http://localhost:11434"),
             ollama_model: read_string(db, "ollama_model", "qwen3:4b"),
+            openai_endpoint: read_string(db, "openai_endpoint", "https://api.openai.com/v1"),
+            openai_model: read_string(db, "openai_model", "gpt-4o-mini"),
+            openai_api_key_env: read_string(db, "openai_api_key_env", "OPENAI_API_KEY"),
             ai_tag_fallback: {
                 let v = read_string(db, "ai_tag_fallback", "rules");
                 if v == "none" {
@@ -87,7 +104,7 @@ impl Settings {
             title_max_length: read_usize(db, "title_max_length", 10),
             capture_shortcut: read_string(db, "capture_shortcut", "Ctrl+Shift+S"),
             capture_shortcut_alt: read_string(db, "capture_shortcut_alt", "Alt+W"),
-            search_shortcut: read_string(db, "search_shortcut", "Alt+Space"),
+            search_shortcut: read_string(db, "search_shortcut", "Ctrl+Alt+Space"),
             screen_ocr_shortcut: read_string(db, "screen_ocr_shortcut", "Ctrl+Shift+O"),
             autostart: read_bool(db, "autostart", false),
             clipboard_history_enabled: read_bool(db, "clipboard_history_enabled", true),
@@ -101,7 +118,7 @@ pub fn seed_defaults(db: &Database) {
     seed_setting(db, "autostart", "false");
     seed_setting(db, "capture_shortcut", "Ctrl+Shift+S");
     seed_setting(db, "capture_shortcut_alt", "Alt+W");
-    seed_setting(db, "search_shortcut", "Alt+Space");
+    seed_setting(db, "search_shortcut", "Ctrl+Alt+Space");
     seed_setting(db, "screen_ocr_shortcut", "Ctrl+Shift+O");
     seed_setting(db, "clipboard_history_enabled", "true");
     seed_setting(db, "clipboard_history_max", "500");
@@ -110,8 +127,12 @@ pub fn seed_defaults(db: &Database) {
     seed_setting(db, "auto_close_on_blur", "true");
     seed_setting(db, "auto_close_delay_ms", "150");
     seed_setting(db, "ai_enabled", "false");
+    seed_setting(db, "ai_provider", "ollama");
     seed_setting(db, "ollama_endpoint", "http://localhost:11434");
     seed_setting(db, "ollama_model", "qwen3:4b");
+    seed_setting(db, "openai_endpoint", "https://api.openai.com/v1");
+    seed_setting(db, "openai_model", "gpt-4o-mini");
+    seed_setting(db, "openai_api_key_env", "OPENAI_API_KEY");
     seed_setting(db, "ai_tag_fallback", "rules");
     seed_setting(db, "auto_tag_on_capture", "true");
     seed_setting(db, "capture_text_max_length", "50000");

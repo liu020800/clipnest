@@ -18,7 +18,7 @@ pub fn apply_shortcut_bindings<R: Runtime>(app: &tauri::AppHandle<R>) {
     let search = db
         .get_setting("search_shortcut")
         .unwrap_or(None)
-        .unwrap_or_else(|| "Alt+Space".to_string());
+        .unwrap_or_else(|| "Ctrl+Alt+Space".to_string());
     let screen_ocr = db
         .get_setting("screen_ocr_shortcut")
         .unwrap_or(None)
@@ -109,4 +109,14 @@ pub fn update_shortcut<R: Runtime>(
 // Helper to keep trait bounds visible
 pub fn _unused_db_mutex() -> Option<Mutex<Database>> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_search_shortcut_is_parseable() {
+        assert!(Shortcut::from_str("Ctrl+Alt+Space").is_ok());
+    }
 }

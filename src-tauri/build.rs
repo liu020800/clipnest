@@ -39,6 +39,15 @@ fn sync_wechat_ocr_resource() {
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=DEP_TAURI_DEV");
+    if std::env::var("PROFILE").as_deref() == Ok("release")
+        && std::env::var("DEP_TAURI_DEV").as_deref() != Ok("false")
+    {
+        panic!(
+            "ClipNest release requires embedded frontend assets. Run `npm run tauri -- build` \
+             from the repository root, not bare `cargo build --release`."
+        );
+    }
     sync_wechat_ocr_resource();
     tauri_build::build()
 }

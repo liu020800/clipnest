@@ -61,7 +61,7 @@ const MOCK_SNIPPETS: Snippet[] = [
 const MOCK_SETTINGS: Record<string, string> = {
   capture_shortcut: "Ctrl+Shift+S",
   capture_shortcut_alt: "Alt+W",
-  search_shortcut: "Alt+Space",
+  search_shortcut: "Ctrl+Alt+Space",
   title_max_length: "10",
   capture_text_max_length: "50000",
   search_limit: "50",
@@ -70,6 +70,10 @@ const MOCK_SETTINGS: Record<string, string> = {
   auto_close_delay_ms: "150",
   ollama_endpoint: "http://localhost:11434",
   ollama_model: "qwen3:4b",
+  ai_provider: "ollama",
+  openai_endpoint: "https://api.openai.com/v1",
+  openai_model: "gpt-4o-mini",
+  openai_api_key_env: "OPENAI_API_KEY",
   ai_tag_fallback: "rules",
   ai_enabled: "false",
   auto_tag_on_capture: "true",
@@ -112,6 +116,10 @@ export const api = {
     inTauri ? invoke<void>("copy_to_clipboard", { text }) : Promise.resolve(),
   pasteText: (text: string) =>
     inTauri ? invoke<void>("paste_text", { text }) : Promise.resolve(),
+  copySnippetToClipboard: (id: number) =>
+    inTauri ? invoke<void>("copy_snippet_to_clipboard", { id }) : Promise.resolve(),
+  pasteSnippet: (id: number) =>
+    inTauri ? invoke<void>("paste_snippet", { id }) : Promise.resolve(),
   getCurrentClipboardText: () =>
     inTauri
       ? invoke<string>("get_current_clipboard_text")

@@ -68,7 +68,7 @@ export function DetailPanel({
   loading: boolean;
   query: string;
   onAfterMutation: () => void;
-  onCopy: (text: string, label: string) => void;
+  onCopy: (id: number, label: string) => void;
 }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingTags, setEditingTags] = useState(false);
@@ -163,7 +163,7 @@ export function DetailPanel({
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() => onCopy(item.content, "已复制内容")}
+              onClick={() => onCopy(item.id, "已复制内容")}
               className="detail-action"
               title="复制全文 (Ctrl+C)"
             >

@@ -9,6 +9,26 @@ import { useSettings } from "../hooks/useSettings";
 import type { TagSummary } from "../types";
 
 const APP_VERSION = "1.1.2";
+const DEFAULT_AI_PROVIDER = "ollama";
+const DEFAULT_OPENAI_ENDPOINT = "https://api.openai.com/v1";
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+const DEFAULT_OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
+
+function isHttpEndpoint(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.username || url.password || url.search || url.hash) return false;
+    if (url.hostname === "bps.openai.com" || url.hostname.endsWith(".bps.openai.com")) return false;
+    if (url.protocol === "https:") return true;
+    return url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isEnvironmentVariableName(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+}
 
 export function SettingsWindow({
   onToast,
@@ -249,12 +269,14 @@ export function SettingsWindow({
 
   const isAutostartOn = settings.getBool("autostart", false);
   const isAiOn = settings.getBool("ai_enabled", false);
+  const aiProvider = settings.get("ai_provider", DEFAULT_AI_PROVIDER);
+  const isOpenAiCompatible = aiProvider === "openai-compatible" || aiProvider === "openai_compatible";
   const isAutoTagOn = settings.getBool("auto_tag_on_capture", true);
   const isAutoCloseOn = settings.getBool("auto_close_on_blur", true);
   const isClipboardHistoryOn = settings.getBool("clipboard_history_enabled", true);
   const captureShortcut = settings.get("capture_shortcut", "Ctrl+Shift+S");
   const captureShortcutAlt = settings.get("capture_shortcut_alt", "Alt+W");
-  const searchShortcut = settings.get("search_shortcut", "Alt+Space");
+  const searchShortcut = settings.get("search_shortcut", "Ctrl+Alt+Space");
   const screenOcrShortcut = settings.get("screen_ocr_shortcut", "Ctrl+Shift+O");
   const titleMax = settings.getNum("title_max_length", 10);
   const captureMax = settings.getNum("capture_text_max_length", 50000);
@@ -264,6 +286,9 @@ export function SettingsWindow({
   const autoCloseDelay = settings.getNum("auto_close_delay_ms", 150);
   const ollamaEndpoint = settings.get("ollama_endpoint", "http://localhost:11434");
   const ollamaModel = settings.get("ollama_model", "qwen3:4b");
+  const openAiEndpoint = settings.get("openai_endpoint", DEFAULT_OPENAI_ENDPOINT);
+  const openAiModel = settings.get("openai_model", DEFAULT_OPENAI_MODEL);
+  const openAiApiKeyEnv = settings.get("openai_api_key_env", DEFAULT_OPENAI_API_KEY_ENV);
   const aiTagFallback = settings.get("ai_tag_fallback", "rules");
   const isMarkdownPinnedOnly = settings.getBool("markdown_export_pinned_only", false);
 
@@ -351,7 +376,7 @@ export function SettingsWindow({
             <div className="settings-row settings-row-column">
               <div className="settings-row-info">
                 <div className="settings-row-label">搜索快捷键</div>
-                <div className="settings-row-desc">默认 Alt+Space,留空可禁用</div>
+                <div className="settings-row-desc">默认 Ctrl+Alt+Space,留空可禁用</div>
               </div>
               <div className="settings-inline-input">
                 <input
@@ -359,7 +384,7 @@ export function SettingsWindow({
                   defaultValue={searchShortcut}
                   key={`ss-${searchShortcut}`}
                   className="settings-text-input"
-                  placeholder="Alt+Space (留空禁用)"
+                  placeholder="Ctrl+Alt+Space (留空禁用)"
                   onBlur={(e) => {
                     const v = e.target.value.trim();
                     // 允许清空(禁用),只要值有变化就提交。
@@ -561,7 +586,7 @@ export function SettingsWindow({
             <div className="settings-row">
               <div className="settings-row-info">
                 <div className="settings-row-label">启用 AI 标签</div>
-                <div className="settings-row-desc">默认关闭,需要本地 Ollama</div>
+                <div className="settings-row-desc">默认关闭,启用后使用下方选择的 provider</div>
               </div>
               <button
                 type="button"
@@ -574,54 +599,190 @@ export function SettingsWindow({
 
             <div className="settings-row settings-row-column">
               <div className="settings-row-info">
-                <div className="settings-row-label">Ollama 服务地址</div>
-                <div className="settings-row-desc">默认 http://localhost:11434</div>
+                <div className="settings-row-label">AI provider</div>
+                <div className="settings-row-desc">
+                  默认 Ollama；兼容接口的密钥只从本机环境变量读取
+                </div>
               </div>
               <div className="settings-inline-input">
-                <input
-                  type="text"
-                  defaultValue={ollamaEndpoint}
-                  key={`ep-${ollamaEndpoint}`}
+                <select
                   className="settings-text-input"
-                  placeholder="http://localhost:11434"
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    if (v && v !== ollamaEndpoint) void settings.saveOne("ollama_endpoint", v);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                  }}
-                />
+                  value={isOpenAiCompatible ? "openai_compatible" : DEFAULT_AI_PROVIDER}
+                  onChange={(e) => void settings.saveOne("ai_provider", e.target.value)}
+                >
+                  <option value="ollama">Ollama（本地）</option>
+                  <option value="openai_compatible">OpenAI-compatible</option>
+                </select>
               </div>
             </div>
 
-            <div className="settings-row settings-row-column">
-              <div className="settings-row-info">
-                <div className="settings-row-label">Ollama 模型</div>
-                <div className="settings-row-desc">默认 qwen3:4b</div>
-              </div>
-              <div className="settings-inline-input">
-                <input
-                  type="text"
-                  defaultValue={ollamaModel}
-                  key={`mdl-${ollamaModel}`}
-                  className="settings-text-input"
-                  placeholder="qwen3:4b"
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    if (v && v !== ollamaModel) void settings.saveOne("ollama_model", v);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                  }}
-                />
-              </div>
-            </div>
+            {isOpenAiCompatible ? (
+              <>
+                <div className="settings-row settings-row-column">
+                  <div className="settings-row-info">
+                    <div className="settings-row-label">兼容接口地址</div>
+                    <div className="settings-row-desc">OpenAI-compatible HTTP API，通常以 /v1 结尾</div>
+                  </div>
+                  <div className="settings-inline-input">
+                    <input
+                      type="url"
+                      defaultValue={openAiEndpoint}
+                      key={`openai-ep-${openAiEndpoint}`}
+                      className="settings-text-input"
+                      style={{ width: 240 }}
+                      placeholder={DEFAULT_OPENAI_ENDPOINT}
+                      autoComplete="off"
+                      spellCheck={false}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if (!isHttpEndpoint(v)) {
+                          e.target.value = openAiEndpoint;
+                          onToast("接口地址无效", "请输入 http:// 或 https:// 地址", "warning");
+                          return;
+                        }
+                        if (v !== openAiEndpoint) void settings.saveOne("openai_endpoint", v);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="settings-row settings-row-column">
+                  <div className="settings-row-info">
+                    <div className="settings-row-label">兼容接口模型</div>
+                    <div className="settings-row-desc">填写服务提供方公布的模型 ID</div>
+                  </div>
+                  <div className="settings-inline-input">
+                    <input
+                      type="text"
+                      defaultValue={openAiModel}
+                      key={`openai-model-${openAiModel}`}
+                      className="settings-text-input"
+                      placeholder={DEFAULT_OPENAI_MODEL}
+                      autoComplete="off"
+                      spellCheck={false}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if (!v) {
+                          e.target.value = openAiModel;
+                          onToast("模型不能为空", "请填写兼容接口的模型 ID", "warning");
+                          return;
+                        }
+                        if (v !== openAiModel) void settings.saveOne("openai_model", v);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="settings-row settings-row-column">
+                  <div className="settings-row-info">
+                    <div className="settings-row-label">API key 环境变量名</div>
+                    <div className="settings-row-desc">
+                      只保存变量名，不显示或持久化密钥；请在启动 ClipNest 前设置该环境变量
+                    </div>
+                  </div>
+                  <div className="settings-inline-input">
+                    <input
+                      type="text"
+                      defaultValue={openAiApiKeyEnv}
+                      key={`openai-env-${openAiApiKeyEnv}`}
+                      className="settings-text-input"
+                      placeholder={DEFAULT_OPENAI_API_KEY_ENV}
+                      autoComplete="off"
+                      spellCheck={false}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if (!isEnvironmentVariableName(v)) {
+                          e.target.value = openAiApiKeyEnv;
+                          onToast(
+                            "环境变量名无效",
+                            "请使用字母或下划线开头，且仅包含字母、数字和下划线",
+                            "warning",
+                          );
+                          return;
+                        }
+                        if (v !== openAiApiKeyEnv) void settings.saveOne("openai_api_key_env", v);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                      }}
+                    />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="settings-row settings-row-column">
+                  <div className="settings-row-info">
+                    <div className="settings-row-label">Ollama 服务地址</div>
+                    <div className="settings-row-desc">默认 http://localhost:11434</div>
+                  </div>
+                  <div className="settings-inline-input">
+                    <input
+                      type="url"
+                      defaultValue={ollamaEndpoint}
+                      key={`ep-${ollamaEndpoint}`}
+                      className="settings-text-input"
+                      placeholder="http://localhost:11434"
+                      autoComplete="off"
+                      spellCheck={false}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if (!isHttpEndpoint(v)) {
+                          e.target.value = ollamaEndpoint;
+                          onToast("服务地址无效", "请输入 http:// 或 https:// 地址", "warning");
+                          return;
+                        }
+                        if (v !== ollamaEndpoint) void settings.saveOne("ollama_endpoint", v);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="settings-row settings-row-column">
+                  <div className="settings-row-info">
+                    <div className="settings-row-label">Ollama 模型</div>
+                    <div className="settings-row-desc">默认 qwen3:4b</div>
+                  </div>
+                  <div className="settings-inline-input">
+                    <input
+                      type="text"
+                      defaultValue={ollamaModel}
+                      key={`mdl-${ollamaModel}`}
+                      className="settings-text-input"
+                      placeholder="qwen3:4b"
+                      autoComplete="off"
+                      spellCheck={false}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if (!v) {
+                          e.target.value = ollamaModel;
+                          onToast("模型不能为空", "请填写 Ollama 模型名", "warning");
+                          return;
+                        }
+                        if (v !== ollamaModel) void settings.saveOne("ollama_model", v);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                      }}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="settings-row settings-row-column">
               <div className="settings-row-info">
                 <div className="settings-row-label">失败时回退</div>
-                <div className="settings-row-desc">Ollama 不可用时是否回退到规则标签</div>
+                <div className="settings-row-desc">所选 provider 不可用时是否回退到规则标签</div>
               </div>
               <div className="settings-inline-input">
                 <select

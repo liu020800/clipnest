@@ -116,10 +116,12 @@ export function SearchWindow({
     async (closeAfter: boolean) => {
       if (!selected) return;
       try {
-        await api.copyToClipboard(selected.content);
+        await api.copySnippetToClipboard(selected.id);
         onToast("已复制", selected.title, "success");
         if (closeAfter) {
           window.setTimeout(() => void api.hideCurrentWindow(), 200);
+        } else {
+          void load(queryRef.current, categoryRef.current);
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -133,7 +135,7 @@ export function SearchWindow({
     async () => {
       if (!selected) return;
       try {
-        await api.pasteText(selected.content);
+        await api.pasteSnippet(selected.id);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         onToast("粘贴失败", msg, "error");
@@ -187,7 +189,7 @@ export function SearchWindow({
         onActivate={(id) => {
           setSelectedId(id);
           const item = items.find((it) => it.id === id);
-          if (item) void api.pasteText(item.content).catch((e) => {
+          if (item) void api.pasteSnippet(item.id).catch((e) => {
             onToast("粘贴失败", String(e), "error");
           });
         }}
@@ -199,9 +201,10 @@ export function SearchWindow({
         loading={loading}
         query={query}
         onAfterMutation={refreshAfterMutation}
-        onCopy={(text, label) => {
-          void api.copyToClipboard(text).then(() => {
+        onCopy={(id, label) => {
+          void api.copySnippetToClipboard(id).then(() => {
             onToast(label, undefined, "success");
+            void load(queryRef.current, categoryRef.current);
           }).catch((e) => {
             onToast("复制失败", String(e), "error");
           });
